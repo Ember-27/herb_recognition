@@ -1,0 +1,76 @@
+# 快速验证配置：验证 pretrained=true 能否显著提升纯视觉准确率
+# 数据：16 类子集 (4800 训练 / 791 验证)，4 epoch
+# 用途：验证"从零训练 3 epoch"是纯视觉 15-20% 的根因后，再决定全量重训参数
+
+# ---------- 运行环境 ----------
+device: cuda:0
+seed: 42
+image_size: 224
+batch_size: 16
+num_workers: 4
+num_classes: 163
+
+# ---------- 数据 ----------
+data:
+  root: data
+  train_csv: data/processed/quick_train.csv
+  val_csv: data/processed/quick_val.csv
+  test_csv: data/processed/val_no_text.csv
+
+# ---------- 视觉编码器 ----------
+vision:
+  name: swin_tiny
+  pretrained: true           # 关键修复点：启用 ImageNet 预训练权重
+  freeze_backbone_epochs: 1
+
+# ---------- 文本编码器 ----------
+text:
+  name: bert-base-chinese
+  local_path: D:/models/bert-base-chinese
+  max_length: 64
+  freeze: false
+  unfreeze_layers: 4
+
+# ---------- 跨模态融合 (HCA-Fusion) ----------
+fusion:
+  type: hca_fusion
+  embed_dim: 512
+  num_heads: 8
+
+# ---------- 训练 ----------
+training:
+  epochs: 4                  # 快速验证用短训练
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 0.05
+  backbone_lr_multiplier: 0.1
+  label_smoothing: 0.1
+  cutmix_prob: 0.5
+  text_drop_prob: 0.5
+  text_aug_prob: 0.4
+  balance_weight: 0.7
+  balance_temp: 2.0
+  min_vision_acc: 0.0
+  early_stopping_patience: 5
+  early_stopping_min_delta: 1.0e-4
+  save_dir: experiments/checkpoints/quick_verify
+
+# ---------- 小样本学习 ----------
+few_shot:
+  n_way: 5
+  k_shot: 3
+  q_query: 5
+  episodes_per_epoch: 100
+  epochs: 10
+  lr: 1.0e-4
+  eval_episodes: 200
+
+# ---------- 知识图谱 ----------
+knowledge_graph:
+  use_neo4j: false
+  data_path: knowledge_graph/herbs.csv
+
+# ---------- 日志 ----------
+logging:
+  level: INFO
+  project: herb_recognition_quick

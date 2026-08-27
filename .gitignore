@@ -1,0 +1,49 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# ---- 虚拟环境 ----
+venv/
+venv312/
+.venv/
+
+# ---- 数据集（外部/原始大图，不入库；data/processed/ 为运行必需的小配置，保留）----
+data/external/
+data/raw/
+
+# ---- 模型权重与训练产物（可重新训练生成）----
+experiments/checkpoints/
+*.pth
+*.pt
+*.onnx
+*.safetensors
+*.ckpt
+
+# ---- 部署导出产物（运行 tools/export_model.py 重新生成）----
+exports/
+
+# ---- 离线依赖安装包 ----
+wheels/
+
+# ---- 日志与临时文件 ----
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# ---- IDE / 系统 ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- CodeBuddy 项目数据（本地工具数据，不入库）----
+.codebuddy/

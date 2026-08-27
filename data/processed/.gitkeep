@@ -1,0 +1,2 @@
+# 放置处理好的 CSV：train.csv / val.csv / test.csv
+# 列: image_path,label,text

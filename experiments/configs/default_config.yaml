@@ -1,0 +1,78 @@
+# 中草药多模态识别系统 - 默认配置 (8G 显存优化)
+# 通过 python main.py --config experiments/configs/default_config.yaml 加载
+
+# ---------- 运行环境 ----------
+device: cuda:0           # 无 GPU 时改为 "cpu"
+seed: 42
+image_size: 224          # 8G 显存推荐 224；若显存紧张可降为 192
+batch_size: 16           # 8G 显存推荐 16；OOM 时降到 8
+num_workers: 4
+num_classes: 163         # 由 data/processed/train.csv 自动推导（len(label2idx)），此处仅作推理回退
+
+# ---------- 数据 ----------
+data:
+  root: data
+  train_csv: data/processed/train.csv        # 完整训练集 256,767 张（如需快速试跑可用 tools/subsample_dataset.py 生成子集）
+  val_csv: data/processed/val.csv            # 完整验证集 10,000 张
+  test_csv: data/processed/val_no_text.csv   # 纯视觉评测集（text 列为空，用于无文本泛化评估）
+
+# ---------- 视觉编码器 ----------
+# 注意: 必须用 pretrained=true！从零训练 Swin-Tiny 会严重欠拟合（纯视觉 acc 仅 15-20%），
+#       预训练主干微调后纯视觉 acc 可到 90%+（已在 16 类子集验证）。
+vision:
+  name: swin_tiny            # 可选: swin_tiny / resnet50 / efficientnet_b0 / convnext_tiny
+  pretrained: true           # true: 下载 ImageNet 预训练权重并微调（关键修复项）
+  freeze_backbone_epochs: 1  # 仅热身 1 个 epoch 后解冻主干，配合更长训练充分微调
+
+# ---------- 文本编码器 ----------
+text:
+  name: bert-base-chinese
+  local_path: D:/models/bert-base-chinese   # 本地模型路径，存在则直接用，不再下载
+  max_length: 64
+  freeze: false              # 解冻 BERT 最后几层，让文本真正参与药材语义学习
+  unfreeze_layers: 4          # 解冻最后 4 层 + 池化层（小数据集防过拟合）
+
+# ---------- 跨模态融合 (HCA-Fusion) ----------
+fusion:
+  type: hca_fusion           # 层级式跨模态注意力融合
+  embed_dim: 512
+  num_heads: 8
+
+# ---------- 训练 ----------
+training:
+  epochs: 8                  # GPU 训练；预训练主干下 8 epoch 纯视觉可到 85-90%（越久越高，可改 15）
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 0.05         # 加强 L2 正则
+  backbone_lr_multiplier: 0.1  # 主干学习率倍率 (分层 LR)
+  label_smoothing: 0.1       # 标签平滑：缓解对单一训练风格的过拟合
+  cutmix_prob: 0.5           # CutMix 概率：强正则，强迫模型学全局形态
+  text_drop_prob: 0.5        # 训练时随机丢弃文本概率，迫使模型学会"纯视觉分类"（越大纯视觉越强）
+  text_aug_prob: 0.4         # 训练时随机把完整药性描述替换为"仅功效片段"，模拟用户只输功效短语
+  # 模态平衡：用多模态分支软标签蒸馏纯视觉分支，强制视觉能独立分类(防文本泄漏)
+  balance_weight: 0.7        # 视觉分支对齐多模态分布的损失权重；设为 0 可关闭（越大纯视觉鲁棒性越强）
+  balance_temp: 2.0          # 蒸馏温度，越大分布越平滑
+  min_vision_acc: 0.0        # 保存最佳模型时纯视觉 acc 的最低门槛(0 表示不约束)
+  early_stopping_patience: 5  # 连续 N 个 epoch 有文本 val_acc 无提升则早停
+  early_stopping_min_delta: 1.0e-4  # 判定"有提升"的最小增量
+  save_dir: experiments/checkpoints
+
+# ---------- 小样本学习 (原型网络) ----------
+few_shot:
+  n_way: 5                 # 每个 episode 抽几类
+  k_shot: 3                # 每类 support 样本数
+  q_query: 5               # 每类 query 样本数
+  episodes_per_epoch: 100  # 每 epoch 构造多少个 episode
+  epochs: 10               # 原型网络训练轮数
+  lr: 1.0e-4               # 仅训练特征投影层
+  eval_episodes: 200       # 评估时 episode 数
+
+# ---------- 知识图谱 ----------
+knowledge_graph:
+  use_neo4j: false           # 先用内存版 Networkx，避免额外服务开销
+  data_path: knowledge_graph/herbs.csv
+
+# ---------- 日志 ----------
+logging:
+  level: INFO
+  project: herb_recognition
