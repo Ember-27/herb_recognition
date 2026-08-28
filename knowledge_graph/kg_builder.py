@@ -17,6 +17,7 @@ import os
 import re
 import pandas as pd
 import networkx as nx
+from knowledge_graph.confusable_herbs import get_confusable
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +130,24 @@ def _classify_function(func_text: str) -> List[str]:
     return cats or ["其他"]
 
 
+# ---------------------------------------------------------------------------
+# 毒性识别：从性味文本中提取毒性等级，用于强制风险警示
+# ---------------------------------------------------------------------------
+_TOXICITY_LEVELS: List[str] = ["大毒", "有毒", "小毒", "微毒"]
+
+
+def _parse_toxicity(property_text: str) -> str:
+    """从性味文本中识别毒性等级，返回 大毒/有毒/小毒/微毒/无毒。
+
+    例: 辛甘大热有毒 -> 有毒; 苦微寒有小毒 -> 小毒; 甘平 -> 无毒
+    """
+    text = property_text or ""
+    for level in _TOXICITY_LEVELS:
+        if level in text:
+            return level
+    return "无毒"
+
+
 def _shingles(text: str, n: int = 2) -> set:
     """提取中文文本的连续 n 字片段，用于功效文本相似度比较。"""
     text = re.sub(r"[^\u4e00-\u9fa5]", "", text or "")
@@ -200,7 +219,10 @@ class HerbKnowledgeGraph:
     def __init__(self, data_path: str):
         self.data_path = data_path
         self.graph = nx.Graph()
+        self.formulas: Dict[str, Dict] = {}
         self._load()
+        self._load_formulas()
+        self._load_herb_extra()
 
     def _load(self):
         if not os.path.exists(self.data_path):
@@ -210,31 +232,34 @@ class HerbKnowledgeGraph:
         for _, row in df.iterrows():
             func = str(row.get("function", "") or "")
             cats = _classify_function(func)
+            prop = str(row.get("property", "") or "")
             self.graph.add_node(
                 row["name"],
-                property=str(row.get("property", "") or ""),
+                property=prop,
                 meridian=str(row.get("meridian", "") or ""),
                 function=func,
                 categories=cats,
+                toxicity=_parse_toxicity(prop),
             )
             # 分类节点：herb -[:category]-> Category
             for c in cats:
                 if c not in self.graph:
-                    self.graph.add_node(c, node_type="category")
+                    self.graph.add_node(c, node_type="category", toxicity="未知")
                 self.graph.add_edge(row["name"], c, relation="category")
             # 归经节点：herb -[:meridian]-> Meridian
             for m in str(row.get("meridian", "") or "").replace("、", ",").split(","):
                 m = m.strip()
                 if m:
                     if m not in self.graph:
-                        self.graph.add_node(m, node_type="meridian")
+                        self.graph.add_node(m, node_type="meridian", toxicity="未知")
                     self.graph.add_edge(row["name"], m, relation="meridian")
         # 2) 相须相使配对（数据自带）
         for _, row in df.iterrows():
             paired = str(row.get("paired_herb", "") or "").strip()
             if paired and paired != "nan":
                 if paired not in self.graph:
-                    self.graph.add_node(paired, categories=["其他"])
+                    self.graph.add_node(paired, categories=["其他"],
+                                        toxicity="未知")
                 self.graph.add_edge(row["name"], paired, relation="paired")
         # 2.5) 将内置十八反/十九畏涉及的药材纳入图谱（即使不在数据表中，
         #      经典禁忌也能被查询、检索与可视化，避免"甘草×甘遂"等盲区）
@@ -244,7 +269,7 @@ class HerbKnowledgeGraph:
                 if x not in self.graph:
                     self.graph.add_node(x, categories=["其他"],
                                         property="", meridian="", function="",
-                                        builtin=True)
+                                        toxicity="未知", builtin=True)
         # 3) 内置禁忌规则（十八反 / 十九畏）
         names = [n for n in self.graph.nodes if self.graph.nodes[n].get("node_type") != "category"]
         for i, a in enumerate(names):
@@ -253,6 +278,88 @@ class HerbKnowledgeGraph:
                     self.graph.add_edge(a, b, relation="incompatible")
                 elif _is_restraint(a, b):
                     self.graph.add_edge(a, b, relation="restraint")
+
+    def _load_herb_extra(self):
+        """加载增量字段表（herb_extra.csv）：别名、适用病症、个体禁忌。
+
+        与药材表同目录；按归一化药材名合并到对应节点属性，
+        供 get_info/describe 输出，满足知识库「别名/适用病症/个体禁忌」字段需求。
+        """
+        fp = os.path.join(os.path.dirname(self.data_path), "herb_extra.csv")
+        if not os.path.exists(fp):
+            return
+        df = pd.read_csv(fp)
+        for _, row in df.iterrows():
+            n = _normalize_name(str(row["name"]).strip())
+            if n not in self.graph:
+                continue
+            nd = self.graph.nodes[n]
+            if pd.notna(row.get("aliases")):
+                nd["aliases"] = [a.strip() for a in
+                                 str(row["aliases"]).replace("、", ",").split(",")
+                                 if a.strip()]
+            if pd.notna(row.get("indications")):
+                nd["indications"] = str(row["indications"]).strip()
+            if pd.notna(row.get("cautions")):
+                nd["cautions"] = str(row["cautions"]).strip()
+
+    def _load_formulas(self):
+        """加载经典方剂库（formulas.csv），构建 方剂 实体节点与 组成 边。
+
+        方剂表与药材表同目录；组成边只对知识库内已收录的药材建立，
+        其余药材保留在 composition 文本中供展示。
+        """
+        fp = os.path.join(os.path.dirname(self.data_path), "formulas.csv")
+        if not os.path.exists(fp):
+            return
+        df = pd.read_csv(fp)
+        for _, row in df.iterrows():
+            name = str(row["name"]).strip()
+            comps = [c.strip()
+                     for c in str(row.get("composition", "") or "")
+                     .replace("、", ",").split(",") if c.strip()]
+            self.formulas[name] = {
+                "name": name,
+                "source": str(row.get("source", "") or "").strip(),
+                "category": str(row.get("category", "") or "").strip(),
+                "composition": comps,
+                "composition_text": str(row.get("composition", "") or "").strip(),
+                "effects": str(row.get("effects", "") or "").strip(),
+                "indications": str(row.get("indications", "") or "").strip(),
+                "usage": str(row.get("usage", "") or "").strip(),
+                "warning": str(row.get("warning", "") or "").strip(),
+            }
+            if name not in self.graph:
+                self.graph.add_node(name, node_type="formula", toxicity="未知")
+            # 组成边：精确名优先，其次按「库内药材名 ⊆ 组成原文」最长包含匹配
+            # （如「熟地黄」匹配库内「熟地」/「地黄」，避免因命名差异漏建边）
+            ordered = list(self.graph.nodes)
+            for c in comps:
+                target = None
+                if c in self.graph:
+                    target = c
+                else:
+                    cands = [n for n in ordered
+                             if not self.graph.nodes[n].get("node_type")
+                             and len(n) >= 2 and n in c]
+                    if cands:
+                        target = max(cands, key=len)
+                if target:
+                    self.graph.add_edge(target, name, relation="formula_in")
+
+    def classic_formulas(self, herb: str, top_k: int = 3) -> List[Dict]:
+        """返回包含 herb 的经典方剂（按功效分类匹配度排序，最多 top_k 首）。"""
+        norm = _normalize_name(herb)
+        scored = []
+        info = self.get_info(norm)
+        cats = set(info["categories"]) if info else set()
+        for f in self.formulas.values():
+            if norm in f["composition_text"]:
+                # 方剂功效分类与药材功效分类重叠越多，排序越靠前
+                overlap = len(cats & set(f["category"].split("、")))
+                scored.append((overlap, f))
+        scored.sort(key=lambda x: -x[0])
+        return [f for _, f in scored[:top_k]]
 
     # --------------------------- 查询 API ---------------------------
     def get_info(self, name: str) -> Optional[Dict]:
@@ -266,6 +373,10 @@ class HerbKnowledgeGraph:
             "meridian": n.get("meridian", ""),
             "function": n.get("function", ""),
             "categories": n.get("categories", []),
+            "toxicity": n.get("toxicity", "无毒"),
+            "aliases": n.get("aliases", []),
+            "indications": n.get("indications", ""),
+            "cautions": n.get("cautions", ""),
         }
 
     def recommend_pairs(self, name: str) -> List[str]:
@@ -390,7 +501,8 @@ class HerbKnowledgeGraph:
             if symptom_hit:
                 reason.append("贴合所述症状")
             results.append({"herb": c, "score": round(score, 2),
-                            "reason": "；".join(reason) or "功效相近"})
+                            "reason": "；".join(reason) or "功效相近",
+                            "toxicity": ci.get("toxicity", "无毒") if ci else "未知"})
         results.sort(key=lambda x: -x["score"])
         return results[:top_k]
 
@@ -400,6 +512,14 @@ class HerbKnowledgeGraph:
             if any(kw in text for kw in kws):
                 cats.add(cat)
         return cats
+
+    def confusable_of(self, name: str) -> Optional[Dict]:
+        """返回药材 name 的易混淆外观鉴别信息（无则 None）。
+
+        用于「相似药材提示」：当识别结果为易混淆药材时，
+        输出外观差异与简易鉴别法，帮助用户区分（对应需求 1.4 用户画像）。
+        """
+        return get_confusable(_normalize_name(name))
 
     def describe(self, name: str) -> str:
         """生成可读的药性说明，供演示界面展示。"""
@@ -419,10 +539,27 @@ class HerbKnowledgeGraph:
             f"归经：{info['meridian']}\n"
             f"功效：{info['function']}\n"
             f"功效分类：{'、'.join(info['categories'])}\n"
+        )
+        if info.get("aliases"):
+            desc += f"别名：{'、'.join(info['aliases'])}\n"
+        if info.get("indications"):
+            desc += f"适用病症：{info['indications']}\n"
+        desc += (
+            f"毒性：{info['toxicity']}\n"
             f"常用配伍(相须相使)：{pair_txt}\n"
             f"配伍禁忌-十八反：{inc_txt}\n"
             f"配伍禁忌-十九畏：{res_txt}"
         )
+        if info.get("cautions"):
+            desc += f"\n个体禁忌：{info['cautions']}"
+        # 毒性强制警示（安全红线）：有毒/大毒醒目提示，小毒/微毒提醒限量
+        tox = info.get("toxicity", "无毒")
+        if tox in ("大毒", "有毒"):
+            desc += (f"\n⚠️【毒性警示】本品为{tox}药材，严禁自行煎服或超量使用，"
+                     "必须在执业中医师指导下辨证用药！")
+        elif tox in ("小毒", "微毒"):
+            desc += (f"\n⚠️【注意】本品含{tox}成分，用量需谨慎控制，"
+                     "请遵医嘱或在医师指导下使用。")
         if self.graph.nodes[norm].get("builtin"):
             desc += ("\n（注：该药为内置十八反/十九畏经典条目，"
                      "数据表未收录详细药性，此处仅展示其配伍禁忌关系。）")
@@ -461,6 +598,10 @@ class HerbKnowledgeGraph:
                 "meridian": nd.get("meridian", ""),
                 "function": nd.get("function", ""),
                 "categories": nd.get("categories", []),
+                "toxicity": nd.get("toxicity", "无毒"),
+                "aliases": nd.get("aliases", []),
+                "indications": nd.get("indications", ""),
+                "cautions": nd.get("cautions", ""),
                 "pairs": self.recommend_pairs(n),
                 "incompatible": contra["incompatible"],
                 "restraint": contra["restraint"],
@@ -477,7 +618,21 @@ class HerbKnowledgeGraph:
                 nd = self.graph.nodes[n]
                 if nd.get("node_type"):
                     if include_meta:
-                        nodes.append({"id": n, "type": nd["node_type"]})
+                        extra = {}
+                        # 方剂节点附带详情，供前端详情面板展示
+                        if nd["node_type"] == "formula":
+                            f = self.formulas.get(n, {})
+                            extra = {
+                                "category": f.get("category", ""),
+                                "source": f.get("source", ""),
+                                "composition_text": f.get("composition_text", ""),
+                                "effects": f.get("effects", ""),
+                                "indications": f.get("indications", ""),
+                                "usage": f.get("usage", ""),
+                                "warning": f.get("warning", ""),
+                            }
+                        nodes.append({"id": n, "type": nd["node_type"],
+                                      "toxicity": "未知", **extra})
                 else:
                     add_herb(n)
             # 补充同功效分类的相似药（经分类节点相连），增强聚焦子图信息量

@@ -47,8 +47,30 @@ _SYSTEM_PROMPT = (
     "2. 明确区分信息来源：识别结果来自本地模型/知识图谱，"
     "其余补充知识需标注「参考中医典籍」；信息不足时直接说明「不确定」，"
     "并给出保守的鉴别建议。\n"
-    "3. 用通俗中文回答，避免堆砌术语；涉及禁忌与用量时提示以医师诊断为准。"
+    "3. 用通俗中文回答，避免堆砌术语；涉及禁忌与用量时提示以医师诊断为准。\n"
+    "4. 若回答涉及有毒药材（大毒/有毒/小毒/微毒）或任何用药建议，"
+    "必须在结尾明确警告：切勿自行用药，须在执业中医师指导下使用。"
 )
+
+
+# 医疗风险提示与科普免责声明（安全红线：所有用户可见输出必须附带，见 plan.md 验收项 3）
+_DISCLAIMER = (
+    "⚠️ **医疗风险提示**：以上内容由本地识别模型与知识图谱自动生成，"
+    "仅供**科普与学习参考**，不构成任何医疗诊断、处方或用药建议。"
+    "中草药辨识与用药因人因证而异，请务必咨询**执业中医师或药师**，切勿自行用药。"
+)
+
+
+# 低置信度阈值：Top-1 置信度低于该值时强制提示人工复核（需求 1.5-2 / 创新项 IN10）
+_CONFIDENCE_THRESHOLD = 0.5
+
+
+def _low_confidence_hint(prob: float) -> str:
+    """生成低置信度人工复核提示（Top-1 概率低于阈值时调用）。"""
+    return (f"⚠️ **置信度提示**：最高识别置信度仅 {prob * 100:.1f}%"
+            f"（低于 {_CONFIDENCE_THRESHOLD * 100:.0f}%），识别结果可信度不足。"
+            f"建议补充更清晰的图片或药材特征描述后重试，并请专业人士人工复核确认，"
+            f"请勿仅凭该结果用药。")
 
 
 def _local_answer(pred: Dict) -> str:
@@ -72,6 +94,21 @@ def _local_answer(pred: Dict) -> str:
     if pred.get("formula"):
         lines += ["", "【方剂推荐】", *[
             f"- {r['herb']}（依据：{r['reason']}）" for r in pred["formula"]]]
+    if pred.get("classic_formulas"):
+        lines += ["", "【经典方剂参考】"]
+        for f in pred["classic_formulas"]:
+            lines.append(f"- {f['name']}（{f.get('source', '')}）：{f.get('effects', '')}")
+            if f.get("warning"):
+                lines.append(f"  ⚠️ {f['warning']}")
+    contra = pred.get("contraindications") or {}
+    contra_parts = []
+    if contra.get("incompatible"):
+        contra_parts.append("、".join(contra["incompatible"]) + "（十八反）")
+    if contra.get("restraint"):
+        contra_parts.append("、".join(contra["restraint"]) + "（十九畏）")
+    if contra_parts:
+        lines += ["", "【配伍风险提示】" + "；".join(contra_parts)
+                  + "（方剂推荐已自动规避，含禁忌配伍的组方不可使用）"]
     return "\n".join(lines)
 
 
@@ -100,17 +137,28 @@ class HerbDemo:
         # 纯文本识别：无图片时按特性检索匹配最可能的药材（完全匹配优先，Top-5）
         if image is None:
             if not text or not text.strip():
-                return "请上传图片，或输入文本描述（如：味甘平，归肝肾经，滋补肝肾）。", ""
+                return ("请上传图片，或输入文本描述（如：味甘平，归肝肾经，滋补肝肾）。\n\n"
+                        + _DISCLAIMER), _DISCLAIMER
             res = self.kg.search_herbs_by_text(text)
             cands = (res["full"] + res["partial"])[:5]
             if not cands:
-                return "未匹配到任何药材，请补充更明确的性味/归经/功效关键词。", ""
+                return ("未匹配到任何药材，请补充更明确的性味/归经/功效关键词。\n\n"
+                        + _DISCLAIMER), _DISCLAIMER
             lines = ["（纯文本匹配 Top-5，图片可选）"]
             for i, item in enumerate(cands, 1):
                 lines.append(self._format_match_item(i, item, text))
             # 以匹配度最高者为代表，给出完整药性说明、相似药推荐与方剂推荐
             top_name = cands[0]["name"]
             kg_parts = [self.kg.describe(top_name)]
+            conf_txt = self._format_confusable(top_name)
+            if conf_txt:
+                kg_parts.append(conf_txt)
+            fml_txt = self._format_classic_formulas(top_name)
+            if fml_txt:
+                kg_parts.append(fml_txt)
+            risk_txt = self._format_contra_risk(top_name)
+            if risk_txt:
+                kg_parts.append(risk_txt)
             sim_txt = self._similar_herbs_text(top_name)
             if sim_txt:
                 kg_parts.append(sim_txt)
@@ -121,7 +169,8 @@ class HerbDemo:
             else:
                 fr = "暂无可推荐的配伍（或均存在禁忌）。"
             kg_parts.append(f"【方剂推荐（以 {top_name} 为君药）】\n{fr}")
-            return "\n\n".join(lines), "\n\n".join(kg_parts)
+            return ("\n\n".join(lines) + "\n\n" + _DISCLAIMER,
+                    "\n\n".join(kg_parts) + "\n\n" + _DISCLAIMER)
 
         img = Image.fromarray(image).convert("RGB")
         tensor = _TRANSFORM(image=np.array(img))["image"].unsqueeze(0)
@@ -133,9 +182,24 @@ class HerbDemo:
             topk = torch.topk(probs, min(3, len(probs)))
         preds = [(self.idx2label[int(i)], float(p)) for i, p in zip(topk.indices, topk.values)]
         result = "\n".join([f"{name}: {prob*100:.1f}%" for name, prob in preds])
+        # 低置信度人工复核引导（需求 1.5-2 / 创新项 IN10）
+        if preds and preds[0][1] < _CONFIDENCE_THRESHOLD:
+            result += f"\n\n{_low_confidence_hint(preds[0][1])}"
         # 用最高置信度结果查知识图谱
         top_name = preds[0][0]
         kg_desc = self.kg.describe(top_name)
+        # 相似药材鉴别：识别到易混淆对时给出外观差异与简易鉴别法
+        conf_txt = self._format_confusable(top_name)
+        if conf_txt:
+            kg_desc = kg_desc + f"\n\n{conf_txt}"
+        # 经典方剂参考：含该药材的方剂（组成/主治/用法/风险）
+        fml_txt = self._format_classic_formulas(top_name)
+        if fml_txt:
+            kg_desc = kg_desc + f"\n\n{fml_txt}"
+        # 配伍风险显式标注（十八反/十九畏自动规避提示）
+        risk_txt = self._format_contra_risk(top_name)
+        if risk_txt:
+            kg_desc = kg_desc + f"\n\n{risk_txt}"
         # 相似药推荐：功效分类相近的其它药材
         sim_txt = self._similar_herbs_text(top_name)
         if sim_txt:
@@ -159,7 +223,9 @@ class HerbDemo:
         # 纯文本特性检索 Top-5
         if image is None:
             if not text or not text.strip():
-                return {"error": "no_input", "message": "请上传图片或输入文本描述。"}
+                return {"error": "no_input",
+                        "message": "请上传图片或输入文本描述。",
+                        "disclaimer": _DISCLAIMER}
             res = self.kg.search_herbs_by_text(text)
             cands = (res["full"] + res["partial"])[:5]
             top_name = cands[0]["name"] if cands else None
@@ -171,11 +237,18 @@ class HerbDemo:
                     "score": it["score"],
                     "dims": {k: bool(v) for k, v in it["dims"].items()},
                     "hits": {k: list(v) for k, v in it["hits"].items()},
+                    "toxicity": (it["info"] or {}).get("toxicity", "无毒"),
                     "info": it["info"],
                 } for it in cands],
                 "kg_info": self.kg.describe(top_name) if top_name else None,
                 "similar": self._similar_herbs(top_name) if top_name else [],
+                "confusable": self.kg.confusable_of(top_name) if top_name else None,
+                "classic_formulas": self.kg.classic_formulas(top_name)
+                if top_name else [],
+                "contraindications": self.kg.contraindications(top_name)
+                if top_name else {"incompatible": [], "restraint": []},
                 "formula": [],
+                "disclaimer": _DISCLAIMER,
             }
 
         img = Image.fromarray(image).convert("RGB")
@@ -185,17 +258,26 @@ class HerbDemo:
             logits = self.model.predict(tensor, texts, device=self.device)
             probs = torch.softmax(logits, dim=1)[0]
             topk = torch.topk(probs, min(5, len(probs)))
-        preds = [{"name": self.idx2label[int(i)], "prob": float(p)}
-                 for i, p in zip(topk.indices, topk.values)]
+        preds = [{
+            "name": self.idx2label[int(i)], "prob": float(p),
+            "toxicity": (self.kg.get_info(self.idx2label[int(i)]) or {})
+                        .get("toxicity", "无毒"),
+        } for i, p in zip(topk.indices, topk.values)]
         top_name = preds[0]["name"]
         formula = self.kg.recommend_formula(top_name, symptoms=text)
         return {
             "mode": "image",
             "top5": preds,
+            "low_confidence": preds[0]["prob"] < _CONFIDENCE_THRESHOLD,
             "kg_info": self.kg.describe(top_name),
             "similar": self._similar_herbs(top_name),
-            "formula": [{"herb": r["herb"], "reason": r["reason"]}
+            "confusable": self.kg.confusable_of(top_name),
+            "classic_formulas": self.kg.classic_formulas(top_name),
+            "contraindications": self.kg.contraindications(top_name),
+            "formula": [{"herb": r["herb"], "reason": r["reason"],
+                         "toxicity": r.get("toxicity", "无毒")}
                         for r in formula] if formula else [],
+            "disclaimer": _DISCLAIMER,
         }
 
     def _similar_herbs(self, name: str, top_k: int = 5) -> list:
@@ -213,6 +295,57 @@ class HerbDemo:
         items = [f"{s['name']}（{'、'.join(s['categories'])}）"
                  if s["categories"] else s["name"] for s in sim]
         return "【相似药推荐（功效相近）】\n" + "；".join(items)
+
+    def _format_confusable(self, name: str) -> str:
+        """易混淆药材外观鉴别（可读文本）：识别到易混淆对时给出鉴别要点。"""
+        conf = self.kg.confusable_of(name)
+        if not conf:
+            return ""
+        peer = conf["peer"]
+        lines = [
+            f"🔍 **相似药材鉴别**：{name} 与 **{peer}**（{conf.get('category', '外形相似')}）易混淆",
+            f"- 易混原因：{conf.get('why_confused', '')}",
+            f"- 外观差异：{conf.get('appearance_diff', '')}",
+            f"- 简易鉴别：{conf.get('simple_test', '')}",
+        ]
+        if conf.get("note"):
+            lines.append(f"- 使用提示：{conf['note']}")
+        return "\n".join(lines)
+
+    def _format_contra_risk(self, name: str) -> str:
+        """配伍风险显式标注：明确提示哪些药因十八反/十九畏被自动规避。"""
+        contra = self.kg.contraindications(name)
+        parts = []
+        if contra.get("incompatible"):
+            parts.append(f"与{'、'.join(contra['incompatible'])}存在**十八反**")
+        if contra.get("restraint"):
+            parts.append(f"与{'、'.join(contra['restraint'])}存在**十九畏**")
+        if not parts:
+            return ""
+        return ("⚠️ **配伍风险提示**：方剂推荐已自动规避——" + "；".join(parts)
+                + "。含禁忌配伍的组方不可使用，务必经执业医师确认。")
+
+    def _format_classic_formulas(self, herb: str) -> str:
+        """经典方剂推荐（可读文本）：含方剂名、组成、主治、用法与风险提示。"""
+        formulas = self.kg.classic_formulas(herb, top_k=3)
+        if not formulas:
+            return ""
+        blocks = ["📜 **经典方剂参考**（含该药的方剂）"]
+        for f in formulas:
+            lines = [f"- **{f['name']}**（{f['source']}）"]
+            if f.get("category"):
+                lines.append(f"  - 分类：{f['category']}")
+            lines.append(f"  - 组成：{f['composition_text']}")
+            if f.get("effects"):
+                lines.append(f"  - 功效：{f['effects']}")
+            if f.get("indications"):
+                lines.append(f"  - 主治：{f['indications']}")
+            if f.get("usage"):
+                lines.append(f"  - 用法：{f['usage']}")
+            if f.get("warning"):
+                lines.append(f"  - ⚠️ 禁忌/注意：{f['warning']}")
+            blocks.append("\n".join(lines))
+        return "\n".join(blocks)
 
     def search_text(self, text: str) -> str:
         """特性检索：返回所有符合所给性味/归经/功效特性的中草药。"""
@@ -253,6 +386,15 @@ class HerbDemo:
             parts.append("_无_")
         if result.get("hint"):
             parts.append(f"> {result['hint']}")
+        # 匹配度最高者的易混淆外观鉴别与经典方剂（有则提示）
+        if result.get("full"):
+            conf_txt = self._format_confusable(result["full"][0]["name"])
+            if conf_txt:
+                parts.append(conf_txt)
+            fml_txt = self._format_classic_formulas(result["full"][0]["name"])
+            if fml_txt:
+                parts.append(fml_txt)
+        parts.append(f"---\n\n{_DISCLAIMER}")
         return "\n\n".join(parts)
 
     def _extract_herbs_from_question(self, question: str):
@@ -308,12 +450,21 @@ class HerbDemo:
                 lines.append("暂无可推荐的配伍（或均存在禁忌）。")
         return "\n\n".join(lines)
 
-    def build_chat_context(self, question: str):
+    def build_chat_context(self, question: str, image=None):
         """构造 AI 对话的本地上下文。
 
-        优先从问题中提取药材名并查询知识图谱；提取不到时回退为特性检索。
-        返回 (context, herbs, pred_dict)。
+        支持图文混合：优先从问题中提取药材名并查询知识图谱；
+        若同时提供图片（image），以图片识别结果作为上下文主体，文本问题作为补充。
+        提取不到药材名时回退为特性检索。返回 (context, herbs, pred_dict)。
         """
+        # 图文混合问答：图片优先做本地识别，识别结果作为对话上下文
+        if image is not None:
+            pred = self.predict_json(image, question)
+            context = _local_answer(pred)
+            herbs = []
+            if pred.get("mode") == "image":
+                herbs = [it["name"] for it in (pred.get("top5") or [])][:3]
+            return context, herbs, pred
         herbs = self._extract_herbs_from_question(question)
         if herbs:
             context = self._build_context_from_herbs(herbs, question)
@@ -329,18 +480,20 @@ class HerbDemo:
             context = _local_answer(pred)
         return context, herbs, pred
 
-    def _llm_chat(self, question: str, history: list = None) -> tuple:
+    def _llm_chat(self, question: str, history: list = None, image=None) -> tuple:
         """网页端 AI 对话：本地识别上下文 + LLM 生成（与 FastAPI /chat 相同的降级逻辑）。
 
-        无图时按问题做特性检索 Top-5 作为上下文；未配置 Key 或调用失败时，
-        自动降级返回本地知识图谱结果。返回 (新对话历史, 清空后的输入框)。
+        支持图文混合问答：上传图片（image）+ 文本问题 → 先本地识别图片得到药材上下文，
+        再结合文本问题回答；无图时按问题做特性检索 Top-5 作为上下文。
+        未配置 Key 或调用失败时，自动降级返回本地知识图谱结果。
+        返回 (新对话历史, 清空后的输入框)。
         """
         history = list(history) if history else []
         question = (question or "").strip()
-        if not question:
+        if not question and image is None:
             return history, ""
-        # 1) 本地识别上下文：优先从自然语言问题中提取药材名，再回退特性检索
-        context, herbs, pred = self.build_chat_context(question)
+        # 1) 本地识别上下文：优先从自然语言问题中提取药材名，再回退特性检索；有图时走图片识别
+        context, herbs, pred = self.build_chat_context(question, image)
         # 2) RAG 知识库检索依据（首次调用懒加载本地 BERT，检索失败不影响主流程）
         rag_text, rag_sources = "", []
         try:
@@ -377,6 +530,8 @@ class HerbDemo:
         if rag_sources:
             src = "、".join(s["title"] for s in rag_sources[:4])
             answer = f"{answer}\n\n📚 知识库依据：{src}"
+        # 6) 医疗风险提示（安全红线）：所有对话回答统一附带免责声明
+        answer = f"{answer}\n\n{_DISCLAIMER}"
         return new_history + [{"role": "assistant", "content": answer}], ""
 
     def _format_match_item(self, idx: int, item: Dict, query_text: str) -> str:
@@ -397,9 +552,23 @@ class HerbDemo:
             marks.append("功效✗")
         lines = [
             f"{idx}. **{item['name']}**　匹配度 {item['score']} 分　|　{'　'.join(marks)}",
-            f"   - 药性：{info['property']} ｜ 归经：{info['meridian']}",
+            f"   - 药性：{info['property']} ｜ 归经：{info['meridian']}"
+            f" ｜ 毒性：{info.get('toxicity', '无毒')}",
             f"   - 功效：{info['function']}",
         ]
+        if info.get("aliases"):
+            lines.append(f"   - 别名：{'、'.join(info['aliases'])}")
+        if info.get("indications"):
+            lines.append(f"   - 适用病症：{info['indications']}")
+        if info.get("cautions"):
+            lines.append(f"   - ⚠️ 个体禁忌：{info['cautions']}")
+        # 毒性强制警示（安全红线）：大毒/有毒醒目提示，小毒/微毒提醒限量
+        tox = info.get("toxicity", "无毒")
+        if tox in ("大毒", "有毒"):
+            lines.append(f"   - ⚠️ **毒性警示**：{item['name']}为{tox}药材，"
+                         f"严禁自行煎服或超量使用，须在执业中医师指导下辨证用药！")
+        elif tox in ("小毒", "微毒"):
+            lines.append(f"   - ⚠️ 注意：{item['name']}含{tox}成分，用量需谨慎，请遵医嘱使用。")
         if all(dims.values()):
             formula = self.kg.recommend_formula(item["name"], symptoms=query_text, top_k=4)
             if formula:
@@ -407,6 +576,9 @@ class HerbDemo:
                 lines.append(f"   - 方剂推荐：{fr}")
             else:
                 lines.append("   - 方剂推荐：暂无可推荐的配伍（或均存在禁忌）")
+            risk_txt = self._format_contra_risk(item["name"])
+            if risk_txt:
+                lines.append(f"   - {risk_txt}")
         return "\n".join(lines)
 
     def explain(self, image, text: str = ""):
@@ -517,6 +689,18 @@ class HerbDemo:
                 f"，{'多模态' if has_text else '纯视觉'}模式）\n\n"
                 f"红/黄色区域是模型判定为「{label}」时主要依据的图像部位。"
                 f"若高亮集中在叶片/花朵等药材本体，说明模型学到了真实形态特征。")
+        # 毒性强制警示（安全红线）：识别结果为有毒药材时醒目提示
+        tox = (self.kg.get_info(label) or {}).get("toxicity", "无毒")
+        if tox in ("大毒", "有毒"):
+            info += (f"\n\n⚠️ **毒性警示**：识别结果为 **{label}**（{tox}药材），"
+                     f"仅供识别演示，严禁据此自行煎服或用药，须在执业中医师指导下使用！")
+        elif tox in ("小毒", "微毒"):
+            info += (f"\n\n⚠️ 注意：识别结果为 **{label}**（含{tox}成分），"
+                     f"用量需谨慎，请在医师指导下使用。")
+        # 低置信度人工复核引导（需求 1.5-2 / 创新项 IN10）
+        if float(probs[pred]) < _CONFIDENCE_THRESHOLD:
+            info += f"\n\n{_low_confidence_hint(float(probs[pred]))}"
+        info += f"\n\n{_DISCLAIMER}"
         return overlay, info
 
 
@@ -525,11 +709,21 @@ def launch(config: Dict[str, Any], ckpt_path: str = None,
     demo_app = HerbDemo(config, ckpt_path, model=model, device=device)
     with gr.Blocks(title="中草药多模态识别") as ui:
         gr.Markdown("# 中草药多模态识别系统\n支持「图片识别」与「特性检索」两种模式。")
+        # 全局医疗风险提示横幅（安全红线：见 docs/plan.md 验收项 3）
+        gr.Markdown(
+            "<div style='background:#fdf0ef;border:1px solid #e74c3c;"
+            "border-radius:8px;padding:10px 14px;color:#a93226;font-size:13px'>"
+            "⚠️ <b>医疗风险提示</b>：本站为<b>中草药科普与学习演示</b>，"
+            "所有识别与分析结果<b>仅供学习参考，不构成医疗诊断、处方或用药建议</b>。"
+            "中草药辨识与用药因人因证而异，请务必咨询<b>执业中医师或药师</b>，切勿自行用药。"
+            "</div>")
         with gr.Tabs():
             with gr.Tab("图片识别"):
                 gr.Markdown("上传草药图片（可选）或直接输入文本描述："
                             "图片与文本都有时走多模态识别（Top-3），"
-                            "只填文本时按特性检索匹配药材（Top-5）。")
+                            "只填文本时按特性检索匹配药材（Top-5）。"
+                            "识别结果含毒性警示与风险提示；置信度较低时将提示人工复核，"
+                            "结果仅供科普参考。")
                 with gr.Row():
                     img_in = gr.Image(label="上传草药图片(可选，可留空)")
                     txt_in = gr.Textbox(label="文本描述",
@@ -541,7 +735,8 @@ def launch(config: Dict[str, Any], ckpt_path: str = None,
                 btn.click(demo_app.predict, [img_in, txt_in], [out_pred, out_kg])
             with gr.Tab("特性检索"):
                 gr.Markdown("输入药性/归经/功效特性，返回**所有符合的中草药**："
-                            "完全匹配优先，部分匹配在后，并附方剂推荐。")
+                            "完全匹配优先，部分匹配在后，并附方剂推荐（含毒性警示）。"
+                            "结果仅供科普参考，不构成用药建议。")
                 search_in = gr.Textbox(label="特性描述", lines=2,
                                        placeholder="如：味甘平，归肝肾经，滋补肝肾、益精明目")
                 search_btn = gr.Button("检索")
@@ -549,7 +744,8 @@ def launch(config: Dict[str, Any], ckpt_path: str = None,
                 search_btn.click(demo_app.search_text, search_in, search_out)
             with gr.Tab("模型关注区域 (Grad-CAM)"):
                 gr.Markdown("上传图片（可选填文本），查看模型识别时**重点关注的图像部位**："
-                            "红色/黄色区域即模型判断依据，用于验证模型是否真的在看草药本体。")
+                            "红色/黄色区域即模型判断依据，用于验证模型是否真的在看草药本体。"
+                            "热图仅用于模型可解释性演示，不构成识别结论或用药建议。")
                 with gr.Row():
                     cam_img_in = gr.Image(label="上传草药图片")
                     cam_txt_in = gr.Textbox(label="文本描述(可选，留空则走纯视觉分支)",
@@ -563,18 +759,24 @@ def launch(config: Dict[str, Any], ckpt_path: str = None,
                 gr.Markdown(
                     "与 AI 探讨药材：输入问题（如「枸杞和菊花能一起用吗？」），"
                     "系统先做**本地特性检索**提供上下文，再调用智谱 GLM 生成回答；"
-                    "未配置 API Key 或调用失败时自动降级为本地知识图谱结果。")
+                    "未配置 API Key 或调用失败时自动降级为本地知识图谱结果。"
+                    "**支持图文混合问答**：可上传药材图片 + 输入问题，"
+                    "系统先识别图片再结合问题回答。"
+                    "对话内容仅供科普交流，含毒性药材时系统将强制警示，切勿据此自行用药。")
                 chat_hist = gr.State([])
                 # 本环境 Gradio(6.20.0) 的 Chatbot 无 type 参数，固定使用 messages 格式 list[dict]
                 chat_ui = gr.Chatbot(label="AI 对话", height=420)
-                chat_in = gr.Textbox(label="你的问题", lines=2,
-                                     placeholder="如：枸杞和菊花能一起用吗？气虚的人适合吃枸杞吗？")
+                with gr.Row():
+                    chat_in = gr.Textbox(label="你的问题", lines=2, scale=3,
+                                         placeholder="如：枸杞和菊花能一起用吗？气虚的人适合吃枸杞吗？")
+                    chat_img = gr.Image(label="药材图片（可选，图文混合问答）",
+                                        type="numpy", scale=2)
                 with gr.Row():
                     chat_btn = gr.Button("发送", variant="primary")
                     chat_clear = gr.Button("清空对话")
-                chat_btn.click(demo_app._llm_chat, [chat_in, chat_hist],
+                chat_btn.click(demo_app._llm_chat, [chat_in, chat_hist, chat_img],
                                [chat_ui, chat_in])
-                chat_in.submit(demo_app._llm_chat, [chat_in, chat_hist],
+                chat_in.submit(demo_app._llm_chat, [chat_in, chat_hist, chat_img],
                                [chat_ui, chat_in])
                 chat_clear.click(lambda: ([], []), None, [chat_ui, chat_hist])
             with gr.Tab("药材关系图谱"):
@@ -582,7 +784,7 @@ def launch(config: Dict[str, Any], ckpt_path: str = None,
                     "可视化展示中草药知识图谱：**节点 = 药材**（颜色按功效分类，"
                     "方块 = 功效分类，三角 = 归经），**连线 = 关系**（绿 = 相须相使、"
                     "红 = 十八反、橙 = 十九畏）。选择下方药材即可聚焦其配伍与禁忌网络，"
-                    "点击节点查看详情。")
+                    "点击节点查看详情。红色描边 = 有毒药材，图谱仅供科普参考，不构成用药建议。")
                 graph_choices = ["（全图浏览）"] + sorted(demo_app.kg.all_names())
                 graph_dd = gr.Dropdown(
                     choices=graph_choices,

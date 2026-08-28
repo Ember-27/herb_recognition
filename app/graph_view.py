@@ -102,6 +102,9 @@ var nodes = DATA.nodes.map(function (d) {
   return { id: d.id, type: d.type || "herb", focus: !!d.focus,
            property: d.property || "", meridian: d.meridian || "",
            function: d.function || "", categories: d.categories || [],
+           toxicity: d.toxicity || "无毒",
+           aliases: d.aliases || [], indications: d.indications || "",
+           cautions: d.cautions || "",
            pairs: d.pairs || [], incompatible: d.incompatible || [],
            restraint: d.restraint || [],
            x: 0, y: 0, vx: 0, vy: 0, fixed: false };
@@ -141,11 +144,13 @@ var REL_STYLE = {
   "paired":       { color: "#27ae60", width: 2.2, dash: [] },
   "incompatible": { color: "#e74c3c", width: 3.2, dash: [7, 5] },
   "restraint":    { color: "#e67e22", width: 2.2, dash: [4, 4] },
+  "formula_in":   { color: "#8e44ad", width: 1.8, dash: [2, 3] },
   "category":     { color: "#aab7c4", width: 1.2, dash: [] },
   "meridian":     { color: "#aab7c4", width: 1.2, dash: [] }
 };
 var REL_LABEL = { "paired": "相须相使", "incompatible": "十八反",
-                  "restraint": "十九畏", "category": "功效分类", "meridian": "归经" };
+                  "restraint": "十九畏", "formula_in": "组成",
+                  "category": "功效分类", "meridian": "归经" };
 
 function herbColor(n) {
   var c = (n.categories && n.categories[0]) || "其他";
@@ -236,6 +241,21 @@ function showDetail(n) {
     parts.push("<div>药性：" + (n.property || "—") + "</div>");
     parts.push("<div>归经：" + (n.meridian || "—") + "</div>");
     parts.push("<div>功效：" + (n["function"] || "—") + "</div>");
+    if (n.aliases && n.aliases.length) {
+      parts.push("<div>别名：" + n.aliases.join("、") + "</div>");
+    }
+    if (n.indications) {
+      parts.push("<div>适用病症：" + n.indications + "</div>");
+    }
+    var tox = n.toxicity || "无毒";
+    if (tox === "大毒" || tox === "有毒") {
+      parts.push("<div class='warn'>⚠️ 毒性：" + tox
+                 + "（有毒药材，严禁自行煎服或超量使用，须在执业中医师指导下用药）</div>");
+    } else if (tox === "小毒" || tox === "微毒") {
+      parts.push("<div>毒性：" + tox + "（含毒性成分，用量需谨慎，请遵医嘱）</div>");
+    } else {
+      parts.push("<div>毒性：" + tox + "</div>");
+    }
     parts.push("<div>功效分类：" + (n.categories || []).map(function (c) {
       return '<span class="tag" style="background:' + (CAT_COLORS[c] || "#eee") + '22;color:' + (CAT_COLORS[c] || "#666") + '">' + c + "</span>";
     }).join("") + "</div>");
@@ -250,6 +270,7 @@ function showDetail(n) {
     parts.push("<div>十九畏：" + (n.restraint && n.restraint.length
       ? "<span class='warn'>" + n.restraint.join("、") + "</span>"
       : "<span class='muted'>无</span>") + "</div>");
+    if (n.cautions) parts.push("<div class='warn'>⚠️ 个体禁忌：" + n.cautions + "</div>");
     if (n.focus) parts.push("<div class='muted'>当前聚焦药材</div>");
   } else if (n.type === "category") {
     parts.push("<h3>功效分类：<span class='tag'>" + n.id + "</span></h3>");
@@ -257,6 +278,16 @@ function showDetail(n) {
   } else if (n.type === "meridian") {
     parts.push("<h3>归经：" + n.id + "</h3>");
     parts.push("<div>归属该经的药材见图中相连节点。</div>");
+  } else if (n.type === "formula") {
+    parts.push("<h3>📜 " + n.id + "</h3>");
+    if (n.source) parts.push("<div>出处：" + n.source + "</div>");
+    if (n.category) parts.push("<div>方剂分类：" + n.category + "</div>");
+    if (n.composition_text) parts.push("<div>组成：" + n.composition_text + "</div>");
+    if (n.effects) parts.push("<div>功效：" + n.effects + "</div>");
+    if (n.indications) parts.push("<div>主治：" + n.indications + "</div>");
+    if (n.usage) parts.push("<div>用法：" + n.usage + "</div>");
+    if (n.warning) parts.push("<div class='warn'>⚠️ " + n.warning + "</div>");
+    parts.push("<div class='muted'>本图谱仅供科普参考，不构成用药建议。</div>");
   }
   var rels = {};
   n.pairs && n.pairs.forEach(function (p) { rels[p] = "paired"; });
@@ -301,6 +332,21 @@ function draw() {
     ctx.globalAlpha = active ? 1 : 0.13;
     if (n.type === "herb") {
       var r = n.focus ? 16 : 11;
+      var tox = n.toxicity || "无毒";
+      var toxic = (tox === "大毒" || tox === "有毒");
+      if (toxic) {
+        // 有毒药材：红色警示描边 + ⚠ 标记（安全红线）
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + (n.focus ? 4 : 3), 0, Math.PI * 2);
+        ctx.strokeStyle = "#e74c3c";
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        ctx.fillStyle = "#e74c3c";
+        ctx.font = "bold 10px 'Microsoft YaHei', sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("⚠", n.x + r + 5, n.y - r - 2);
+      }
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
       ctx.fillStyle = herbColor(n);
@@ -323,10 +369,18 @@ function draw() {
       ctx.fillText(label, n.x, n.y + 1);
     } else {
       var s = 9;
-      ctx.fillStyle = n.type === "category" ? "#95a5a6" : "#e67e22";
+      ctx.fillStyle = n.type === "category" ? "#95a5a6"
+        : (n.type === "formula" ? "#9b59b6" : "#e67e22");
       ctx.beginPath();
       if (n.type === "category") {
         ctx.rect(n.x - s, n.y - s, s * 2, s * 2);
+      } else if (n.type === "formula") {
+        // 方剂节点：菱形
+        ctx.moveTo(n.x, n.y - s);
+        ctx.lineTo(n.x + s, n.y);
+        ctx.lineTo(n.x, n.y + s);
+        ctx.lineTo(n.x - s, n.y);
+        ctx.closePath();
       } else {
         ctx.moveTo(n.x, n.y - s);
         ctx.lineTo(n.x + s, n.y + s * 0.75);
@@ -354,12 +408,15 @@ function draw() {
   Object.keys(CAT_COLORS).forEach(function (c) {
     items.push('<span class="item"><span class="dot" style="background:' + CAT_COLORS[c] + '"></span>' + c + "</span>");
   });
-  ["paired", "incompatible", "restraint"].forEach(function (r) {
+  ["paired", "incompatible", "restraint", "formula_in"].forEach(function (r) {
     var st = REL_STYLE[r];
     items.push('<span class="item"><span class="line" style="border-color:' + st.color + (st.dash.length ? ";border-top-style:dashed" : "") + '"></span>' + (REL_LABEL[r]) + "</span>");
   });
   items.push('<span class="item"><span class="dot" style="background:#95a5a6;border-radius:2px"></span>功效分类</span>');
   items.push('<span class="item"><span class="dot" style="background:#e67e22;border-radius:2px;clip-path:polygon(50% 0,100% 100%,0 100%)"></span>归经</span>');
+  items.push('<span class="item"><span class="dot" style="background:#9b59b6;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)"></span>经典方剂</span>');
+  items.push('<span class="item"><span class="dot" style="background:#fff;border:2px solid #e74c3c"></span>有毒药材</span>');
+  items.push('<span class="item" style="color:#a93226">⚠ 本图谱仅供科普参考，不构成用药建议，有毒药材须在执业中医师指导下使用</span>');
   legend.innerHTML = items.join("");
 })();
 
@@ -413,9 +470,10 @@ canvas.addEventListener("mousemove", function (e) {
     tip.style.display = "block";
     tip.style.left = (e.clientX - rect.left + 12) + "px";
     tip.style.top = (e.clientY - rect.top - 8) + "px";
+    var toxTxt = n.toxicity && n.toxicity !== "无毒" ? " · " + n.toxicity : "";
     tip.textContent = n.type === "herb"
-      ? n.id + "（" + ((n.categories && n.categories[0]) || "其他") + "）"
-      : (n.type === "category" ? "功效分类：" : "归经：") + n.id;
+      ? n.id + "（" + ((n.categories && n.categories[0]) || "其他") + toxTxt + "）"
+      : (n.type === "category" ? "功效分类：" : (n.type === "formula" ? "经典方剂：" : "归经：")) + n.id;
   } else {
     tip.style.display = "none";
   }

@@ -53,7 +53,17 @@ _SYSTEM_PROMPT = (
     "其余补充知识需标注「参考中医典籍」；信息不足时直接说明「不确定」，"
     "并给出保守的鉴别建议。\n"
     "3. 涉及用法用量时给出常见参考范围，并提醒需在执业中医师指导下使用。\n"
-    "4. 使用简体中文，条理清晰，面向普通用户可读。"
+    "4. 使用简体中文，条理清晰，面向普通用户可读。\n"
+    "5. 若回答涉及有毒药材（大毒/有毒/小毒/微毒）或任何用药建议，"
+    "必须在结尾明确警告：切勿自行用药，须在执业中医师指导下使用。"
+)
+
+
+# 医疗风险提示与科普免责声明（安全红线：所有用户可见输出必须附带）
+_DISCLAIMER = (
+    "⚠️ **医疗风险提示**：以上内容由本地识别模型与知识图谱自动生成，"
+    "仅供**科普与学习参考**，不构成任何医疗诊断、处方或用药建议。"
+    "中草药辨识与用药因人因证而异，请务必咨询**执业中医师或药师**，切勿自行用药。"
 )
 
 
@@ -97,6 +107,22 @@ def _local_answer(pred: dict) -> str:
     if pred.get("formula"):
         lines += ["", "【方剂推荐】", *[
             f"- {r['herb']}（依据：{r['reason']}）" for r in pred["formula"]]]
+    if pred.get("classic_formulas"):
+        lines += ["", "【经典方剂参考】"]
+        for f in pred["classic_formulas"]:
+            lines.append(f"- {f['name']}（{f.get('source', '')}）：{f.get('effects', '')}")
+            if f.get("warning"):
+                lines.append(f"  ⚠️ {f['warning']}")
+    contra = pred.get("contraindications") or {}
+    contra_parts = []
+    if contra.get("incompatible"):
+        contra_parts.append("、".join(contra["incompatible"]) + "（十八反）")
+    if contra.get("restraint"):
+        contra_parts.append("、".join(contra["restraint"]) + "（十九畏）")
+    if contra_parts:
+        lines += ["", "【配伍风险提示】" + "；".join(contra_parts)
+                  + "（方剂推荐已自动规避，含禁忌配伍的组方不可使用）"]
+    lines += ["", _DISCLAIMER]
     return "\n".join(lines)
 
 
@@ -144,7 +170,8 @@ async def search(payload: dict):
     """纯文本特性检索：性味/归经/功效，返回所有符合的中草药。"""
     demo = get_demo()
     text = (payload or {}).get("text", "")
-    return {"query": text, "result": demo.search_text(text)}
+    return {"query": text, "result": demo.search_text(text),
+            "disclaimer": _DISCLAIMER}
 
 
 @app.post("/explain")
@@ -185,17 +212,16 @@ async def chat(image: UploadFile = None, question: str = Form(""),
     if not question:
         return {"error": "empty_question", "message": "请输入问题 question。"}
 
-    # 1) 本地识别：有图走多模态识别（question 仅作为用户问题，不污染分类文本）；
-    #    无图则按 question 做特性检索 Top-5
+    # 1) 接收图片：有图走多模态识别（question 仅作为用户问题，不污染分类文本）
     img = None
     if image is not None:
         data = await image.read()
         if data:
             img = np.array(Image.open(io.BytesIO(data)).convert("RGB"))
-    pred = demo.predict_json(img, "" if img is not None else question)
 
-    # 2) 优先从自然语言问题中提取药材名构造知识图谱上下文；提取不到时回退特性检索
-    context, herbs, pred = demo.build_chat_context(question)
+    # 2) 构建本地识别上下文：有图走图片识别（图文混合问答），
+    #    无图则从自然语言问题提取药材名，提取不到时回退特性检索 Top-5
+    context, herbs, pred = demo.build_chat_context(question, img)
     # 2.5) RAG 知识库检索依据（首次调用懒加载本地 BERT，失败不影响主流程）
     rag_text, rag_sources = "", []
     try:
@@ -218,22 +244,26 @@ async def chat(image: UploadFile = None, question: str = Form(""),
     if not llm.available:
         return {
             "answer": f"{context}\n\n（注：未配置 ZHIPU_API_KEY，以上为本地知识图谱结果；"
-                      f"配置后可获得更自然的对话解释。）",
+                      f"配置后可获得更自然的对话解释。）\n\n{_DISCLAIMER}",
             "llm": "disabled",
             "llm_model": llm.model,
             "rag_sources": rag_sources[:4],
+            "disclaimer": _DISCLAIMER,
             **pred,
         }
     try:
         answer = llm.chat(messages)
-        return {"answer": answer, "llm": "ok", "llm_model": llm.model,
+        return {"answer": f"{answer}\n\n{_DISCLAIMER}", "llm": "ok",
+                "llm_model": llm.model, "disclaimer": _DISCLAIMER,
                 "rag_sources": rag_sources[:4], **pred}
     except LLMError as e:
         return {
-            "answer": f"{context}\n\n（注：LLM 调用失败：{e}。以上为本地知识图谱结果。）",
+            "answer": f"{context}\n\n（注：LLM 调用失败：{e}。以上为本地知识图谱结果。）"
+                      f"\n\n{_DISCLAIMER}",
             "llm": "error",
             "llm_model": llm.model,
             "error_detail": str(e),
+            "disclaimer": _DISCLAIMER,
             "rag_sources": rag_sources[:4],
             **pred,
         }
