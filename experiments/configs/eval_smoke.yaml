@@ -1,0 +1,65 @@
+# 冒烟测试配置：仅用于评估链路验证 + CPU 测速（验证后删除）
+# 用法: python main.py --mode eval --config experiments/configs/eval_smoke.yaml
+device: cpu
+seed: 42
+image_size: 224
+batch_size: 16
+num_workers: 0
+num_classes: 163
+
+data:
+  root: data
+  train_csv: data/processed/train.csv
+  val_csv: data/processed/val_sub.csv
+  test_csv: data/processed/val_no_text.csv
+
+vision:
+  name: swin_tiny
+  pretrained: true
+  freeze_backbone_epochs: 1
+
+text:
+  name: bert-base-chinese
+  local_path: D:/models/bert-base-chinese
+  max_length: 64
+  freeze: false
+  unfreeze_layers: 4
+
+fusion:
+  type: hca_fusion
+  embed_dim: 512
+  num_heads: 8
+
+training:
+  epochs: 8
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 0.05
+  backbone_lr_multiplier: 0.1
+  label_smoothing: 0.1
+  cutmix_prob: 0.5
+  text_drop_prob: 0.5
+  text_aug_prob: 0.4
+  balance_weight: 0.7
+  balance_temp: 2.0
+  min_vision_acc: 0.0
+  early_stopping_patience: 5
+  early_stopping_min_delta: 1.0e-4
+  save_dir: experiments/checkpoints
+
+few_shot:
+  n_way: 5
+  k_shot: 3
+  q_query: 5
+  episodes_per_epoch: 100
+  epochs: 10
+  lr: 1.0e-4
+  eval_episodes: 200
+
+knowledge_graph:
+  use_neo4j: false
+  data_path: knowledge_graph/herbs.csv
+
+logging:
+  level: INFO
+  project: herb_recognition

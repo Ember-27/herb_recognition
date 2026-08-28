@@ -129,6 +129,12 @@ def _classify_function(func_text: str) -> List[str]:
     return cats or ["其他"]
 
 
+def _shingles(text: str, n: int = 2) -> set:
+    """提取中文文本的连续 n 字片段，用于功效文本相似度比较。"""
+    text = re.sub(r"[^\u4e00-\u9fa5]", "", text or "")
+    return {text[i:i + n] for i in range(len(text) - n + 1)} if len(text) >= n else set()
+
+
 # ---------------------------------------------------------------------------
 # 特性检索：把用户描述解析为 性味/归经/功效 三类条件
 # ---------------------------------------------------------------------------
@@ -285,20 +291,43 @@ class HerbKnowledgeGraph:
         return {"incompatible": inc, "restraint": res}
 
     def similar_by_function(self, name: str, top_k: int = 5) -> List[str]:
-        """返回与 name 功效分类重叠的其它草药（相似药推荐）。"""
+        """返回与 name 功效相近的其它草药（相似药推荐）。
+
+        相似度打分 = 功效分类重叠×3 + 功效文本 n-gram 重叠×2
+                   + 性味字符重叠×1 + 归经重叠×1，按总分降序。
+        分类无重叠的直接不推荐，保持"功效相近"的语义。
+        """
         name = _normalize_name(name)
         info = self.get_info(name)
         if info is None:
             return []
         cats = set(info["categories"])
-        score = {}
+        func_grams = (_shingles(info["function"], 4)
+                      | _shingles(info["function"], 3)
+                      | _shingles(info["function"], 2))
+        prop_chars = set(info["property"])
+        meridians = set(m.strip() for m in
+                        str(info["meridian"]).replace("、", ",").split(",") if m.strip())
+        scored = []
         for n in self.graph.nodes:
             if n == name or self.graph.nodes[n].get("node_type"):
                 continue
-            other = set(self.graph.nodes[n].get("categories", []))
-            if cats & other:
-                score[n] = len(cats & other)
-        return [n for n, _ in sorted(score.items(), key=lambda x: -x[1])[:top_k]]
+            nd = self.graph.nodes[n]
+            other = set(nd.get("categories", []))
+            if not (cats & other):
+                continue
+            s = 3.0 * len(cats & other)
+            other_func = str(nd.get("function", "") or "")
+            s += 2.0 * len((_shingles(other_func, 4) | _shingles(other_func, 3)
+                            | _shingles(other_func, 2)) & func_grams)
+            s += 1.0 * len(set(str(nd.get("property", "") or "")) & prop_chars)
+            other_mer = set(m.strip() for m in
+                            str(nd.get("meridian", "") or "").replace("、", ",").split(",")
+                            if m.strip())
+            s += 1.0 * len(other_mer & meridians)
+            scored.append((s, n))
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        return [n for _, n in scored[:top_k]]
 
     def recommend_formula(self, target: str, symptoms: str = None,
                           top_k: int = 5, exclude: List[str] = None) -> List[Dict]:

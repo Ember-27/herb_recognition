@@ -10,7 +10,8 @@
 - 图谱可视化：Gradio 内嵌交互式力导向关系网（节点=药材、边=配伍/禁忌），聚焦单药即可查看其配伍与禁忌网络
 - RAG 增强问答：本地 BERT 对知识图谱切片语义检索，LLM 回答自动附「知识库依据」来源标注，减少幻觉
 - 可解释性：融合注意力可视化 + 推理路径展示
-- 交互演示：Gradio Web 界面，一键识别并给出药性说明
+- 交互演示：Gradio Web 界面，一键识别并给出药性/相似药/方剂说明
+- 相似药推荐：按功效分类自动推荐功效相近的替代药材，辅助辨证选药（图片识别与 REST API 均支持）
 
 ## 目录结构
 
@@ -84,7 +85,7 @@ python main.py --mode demo --ckpt experiments/checkpoints/best_model.pth
 
 网页包含 5 个功能页签：
 
-- **图片识别**：上传图片 + 可选文本描述 → Top-3 识别 + 药性/方剂说明
+- **图片识别**：上传图片 + 可选文本描述 → Top-3 识别 + 药性/相似药/方剂说明
 - **特性检索**：输入性味/归经/功效 → 列出所有匹配药材 + 方剂推荐
 - **模型关注区域 (Grad-CAM)**：可视化模型识别依据的图像部位
 - **AI 对话**：与智谱 GLM 多轮对话，自动附带本地知识图谱 + RAG 知识库检索依据（回答末尾标注来源）；未配置 API Key 或调用失败时自动降级为本地检索结果
@@ -128,7 +129,7 @@ python main.py --mode serve --port 8000
 | 接口 | 说明 |
 |------|------|
 | `GET /health` | 健康检查，返回类别数与 LLM 可用状态 |
-| `POST /predict` | 图片+文本识别（multipart；`image` 留空则做纯文本特性检索），返回 Top-5 + 药性/方剂 |
+| `POST /predict` | 图片+文本识别（multipart；`image` 留空则做纯文本特性检索），返回 Top-5 + 药性/相似药/方剂 |
 | `POST /search` | 纯文本特性检索（JSON: `{"text":"味甘平，归肝肾经"}`） |
 | `POST /explain` | Grad-CAM 热图（multipart，返回 PNG，说明在 `X-Explain-Info` 头，URL 编码） |
 | `POST /chat` | 外部 LLM 对话解释（multipart；`question` + 可选 `image` + 可选 `history` 多轮），返回 `answer` + 本地识别结果 |
@@ -179,7 +180,7 @@ python tools/export_model.py --out exports/vision.pt --verify
 
 - 数据集：val 集 10000 张，163 类
 - 权重：`experiments/checkpoints/best_model.pth`（Epoch 5，510.9 MB）
-- 完整分类报告见 `eval_official.log`（163 类中绝大多数 precision/recall/f1 = 1.00）
+- 精炼报告见 `evaluation/reports/eval_official_report.md`（含逐类摘要与易混淆分析）；原始逐类分类报告留档于 `evaluation/reports/eval_official.log`（163 类中绝大多数 precision/recall/f1 = 1.00）
 
 | 模式 | Accuracy | Top-5 |
 |------|----------|-------|

@@ -37,7 +37,7 @@ from utils.config import load_config
 app = FastAPI(
     title="中草药多模态识别 API",
     description="本地 Swin+BERT 多模态识别 + 知识图谱。"
-                "POST /predict 上传图片(可选)与文本(可选)，返回 Top-5 与药性/方剂信息。",
+                "POST /predict 上传图片(可选)与文本(可选)，返回 Top-5 与药性/相似药/方剂信息。",
     version="1.0.0",
 )
 _demo: HerbDemo = None
@@ -91,6 +91,9 @@ def _local_answer(pred: dict) -> str:
             for i, it in enumerate(top5, 1)]]
     if pred.get("kg_info"):
         lines += ["", "【药性说明（知识图谱）】", pred["kg_info"]]
+    if pred.get("similar"):
+        lines += ["", "【相似药推荐】", "、".join(
+            s["name"] for s in pred["similar"])]
     if pred.get("formula"):
         lines += ["", "【方剂推荐】", *[
             f"- {r['herb']}（依据：{r['reason']}）" for r in pred["formula"]]]
@@ -175,7 +178,7 @@ async def chat(image: UploadFile = None, question: str = Form(""),
       answer      LLM 回答（llm=disabled/error 时为本地降级回答）
       llm         状态: ok / disabled（未配 key）/ error（调用失败）
       llm_model   使用的模型名
-      mode / top5 / kg_info / formula   本地识别结果（与 /predict 一致）
+      mode / top5 / kg_info / similar / formula   本地识别结果（与 /predict 一致）
     """
     demo = get_demo()
     question = (question or "").strip()

@@ -66,6 +66,9 @@ def _local_answer(pred: Dict) -> str:
             for i, it in enumerate(top5, 1)]]
     if pred.get("kg_info"):
         lines += ["", "【药性说明（知识图谱）】", pred["kg_info"]]
+    if pred.get("similar"):
+        lines += ["", "【相似药推荐】", "、".join(
+            s["name"] for s in pred["similar"])]
     if pred.get("formula"):
         lines += ["", "【方剂推荐】", *[
             f"- {r['herb']}（依据：{r['reason']}）" for r in pred["formula"]]]
@@ -105,9 +108,12 @@ class HerbDemo:
             lines = ["（纯文本匹配 Top-5，图片可选）"]
             for i, item in enumerate(cands, 1):
                 lines.append(self._format_match_item(i, item, text))
-            # 以匹配度最高者为代表，给出完整药性说明与方剂推荐
+            # 以匹配度最高者为代表，给出完整药性说明、相似药推荐与方剂推荐
             top_name = cands[0]["name"]
             kg_parts = [self.kg.describe(top_name)]
+            sim_txt = self._similar_herbs_text(top_name)
+            if sim_txt:
+                kg_parts.append(sim_txt)
             formula = self.kg.recommend_formula(top_name, symptoms=text, top_k=4)
             if formula:
                 fr = "\n".join([f"{j+1}. {r['herb']}  (依据: {r['reason']})"
@@ -130,6 +136,10 @@ class HerbDemo:
         # 用最高置信度结果查知识图谱
         top_name = preds[0][0]
         kg_desc = self.kg.describe(top_name)
+        # 相似药推荐：功效分类相近的其它药材
+        sim_txt = self._similar_herbs_text(top_name)
+        if sim_txt:
+            kg_desc = kg_desc + f"\n\n{sim_txt}"
         # 方剂推荐：以 Top-1 为主药，结合可选文本做症状匹配
         formula = self.kg.recommend_formula(top_name, symptoms=text)
         if formula:
@@ -164,6 +174,7 @@ class HerbDemo:
                     "info": it["info"],
                 } for it in cands],
                 "kg_info": self.kg.describe(top_name) if top_name else None,
+                "similar": self._similar_herbs(top_name) if top_name else [],
                 "formula": [],
             }
 
@@ -182,9 +193,26 @@ class HerbDemo:
             "mode": "image",
             "top5": preds,
             "kg_info": self.kg.describe(top_name),
+            "similar": self._similar_herbs(top_name),
             "formula": [{"herb": r["herb"], "reason": r["reason"]}
                         for r in formula] if formula else [],
         }
+
+    def _similar_herbs(self, name: str, top_k: int = 5) -> list:
+        """相似药推荐：与 name 功效分类相近的其它药材（结构化，供 JSON 接口）。"""
+        return [{
+            "name": s,
+            "categories": (self.kg.get_info(s) or {}).get("categories", []),
+        } for s in self.kg.similar_by_function(name, top_k=top_k)]
+
+    def _similar_herbs_text(self, name: str, top_k: int = 5) -> str:
+        """相似药推荐（可读文本）：功效相近的其它药材及分类说明。"""
+        sim = self._similar_herbs(name, top_k)
+        if not sim:
+            return ""
+        items = [f"{s['name']}（{'、'.join(s['categories'])}）"
+                 if s["categories"] else s["name"] for s in sim]
+        return "【相似药推荐（功效相近）】\n" + "；".join(items)
 
     def search_text(self, text: str) -> str:
         """特性检索：返回所有符合所给性味/归经/功效特性的中草药。"""
@@ -509,7 +537,7 @@ def launch(config: Dict[str, Any], ckpt_path: str = None,
                 btn = gr.Button("识别")
                 with gr.Row():
                     out_pred = gr.Textbox(label="识别结果 (图片 Top-3 / 文本 Top-5)")
-                    out_kg = gr.Textbox(label="药性说明 (知识图谱)")
+                    out_kg = gr.Textbox(label="药性说明 / 相似药 / 方剂推荐 (知识图谱)")
                 btn.click(demo_app.predict, [img_in, txt_in], [out_pred, out_kg])
             with gr.Tab("特性检索"):
                 gr.Markdown("输入药性/归经/功效特性，返回**所有符合的中草药**："
