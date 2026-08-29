@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>本草识微 · 中草药多模态识别系统</title>
+<style>
+  :root {
+    --ink: #0c0b09;
+    --ink-2: #141310;
+    --panel: #1b1815;
+    --panel-2: #221e19;
+    --gold: #c9a24b;
+    --gold-soft: #e3c987;
+    --copper: #b87333;
+    --jade: #8aa888;
+    --paper: #ece4d6;
+    --muted: #9a907f;
+    --line: rgba(201,162,75,0.18);
+    --glass: rgba(236,228,214,0.05);
+    --sans: "PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+    --serif: "Songti SC","STSong","SimSun",Georgia,"Times New Roman",serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    background:var(--ink);
+    color:var(--paper);
+    font-family:var(--sans);
+    line-height:1.7;
+    overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:1180px; margin:0 auto; padding:0 28px; }
+  section { position:relative; }
+
+  /* ---------- Top nav ---------- */
+  .nav {
+    position:fixed; top:0; left:0; right:0; z-index:50;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:16px 28px;
+    background:linear-gradient(180deg, rgba(12,11,9,0.92), rgba(12,11,9,0));
+    backdrop-filter:blur(6px);
+  }
+  .brand { display:flex; align-items:center; gap:12px; }
+  .seal {
+    width:38px; height:38px; border:1.5px solid var(--gold);
+    border-radius:7px; display:grid; place-items:center;
+    color:var(--gold); font-family:var(--serif); font-size:18px; font-weight:700;
+    box-shadow:inset 0 0 0 3px rgba(201,162,75,0.12);
+  }
+  .brand b { font-family:var(--serif); font-size:19px; letter-spacing:2px; font-weight:600; }
+  .brand span { display:block; font-size:11px; color:var(--muted); letter-spacing:3px; }
+  .nav-links { display:flex; gap:26px; align-items:center; }
+  .nav-links a { color:var(--muted); text-decoration:none; font-size:14px; letter-spacing:1px; transition:color .25s; }
+  .nav-links a:hover { color:var(--gold-soft); }
+  .btn-enter {
+    border:1px solid var(--gold); color:var(--gold-soft);
+    padding:9px 20px; border-radius:30px; font-size:14px; text-decoration:none;
+    transition:all .3s; letter-spacing:1px;
+  }
+  .btn-enter:hover { background:var(--gold); color:var(--ink); }
+
+  /* ---------- Hero ---------- */
+  .hero { min-height:100vh; display:flex; align-items:center; position:relative; overflow:hidden; }
+  .hero-bg {
+    position:absolute; inset:-8% -8% -8% -8%;
+    background:url('hero.jpg') center/cover no-repeat;
+    filter:brightness(.42) saturate(.85) contrast(1.05);
+    transform:scale(1.05);
+    will-change:transform;
+  }
+  .hero-veil {
+    position:absolute; inset:0;
+    background:
+      radial-gradient(120% 80% at 70% 30%, transparent 30%, rgba(12,11,9,.55) 70%, var(--ink) 100%),
+      linear-gradient(90deg, var(--ink) 8%, rgba(12,11,9,.35) 55%, transparent 100%);
+  }
+  .hero-inner { position:relative; z-index:2; max-width:760px; padding-top:60px; }
+  .kicker {
+    font-family:var(--serif); font-style:italic; color:var(--gold-soft);
+    font-size:17px; letter-spacing:2px; margin-bottom:18px; opacity:0;
+    animation:rise .9s .1s forwards;
+  }
+  .hero h1 {
+    font-family:var(--sans); font-weight:800; font-size:clamp(40px,7vw,82px);
+    line-height:1.04; letter-spacing:1px;
+  }
+  .hero h1 em {
+    font-family:var(--serif); font-style:italic; font-weight:500;
+    color:var(--gold-soft);
+  }
+  .hero h1 .reveal { display:block; overflow:hidden; }
+  .hero h1 .reveal > span { display:block; transform:translateY(110%); animation:riseUp 1s forwards; }
+  .hero h1 .reveal:nth-child(2) > span { animation-delay:.18s; }
+  .hero h1 .reveal:nth-child(3) > span { animation-delay:.34s; }
+  .hero p.lead {
+    margin-top:26px; max-width:560px; color:var(--paper); font-size:17px;
+    opacity:0; animation:rise 1s .5s forwards;
+  }
+  .hero-cta { margin-top:38px; display:flex; gap:18px; align-items:center; opacity:0; animation:rise 1s .7s forwards; }
+  .cta-main {
+    background:linear-gradient(135deg,var(--gold),var(--copper));
+    color:#1a130a; padding:14px 32px; border-radius:34px; font-weight:700;
+    text-decoration:none; letter-spacing:1px; transition:transform .3s, box-shadow .3s;
+    box-shadow:0 10px 30px rgba(201,162,75,.22);
+  }
+  .cta-main:hover { transform:translateY(-3px); box-shadow:0 16px 40px rgba(201,162,75,.35); }
+  .cta-ghost { color:var(--muted); text-decoration:none; font-size:15px; border-bottom:1px solid var(--line); padding-bottom:3px; }
+  .cta-ghost:hover { color:var(--gold-soft); }
+
+  .scroll-hint {
+    position:absolute; bottom:30px; left:50%; transform:translateX(-50%);
+    color:var(--muted); font-size:12px; letter-spacing:3px; text-align:center; z-index:2;
+    opacity:0; animation:rise 1s 1s forwards;
+  }
+  .scroll-hint i { display:block; width:1px; height:34px; margin:10px auto 0; background:linear-gradient(var(--gold),transparent); animation:drop 1.8s infinite; }
+
+  /* ---------- Marquee of herbs ---------- */
+  .herb-rail { padding:64px 0 30px; border-top:1px solid var(--line); }
+  .rail-head { display:flex; align-items:baseline; gap:16px; margin-bottom:26px; }
+  .rail-head h3 { font-family:var(--serif); font-size:24px; letter-spacing:2px; color:var(--gold-soft); }
+  .rail-head span { color:var(--muted); font-size:13px; letter-spacing:2px; }
+  .rail { display:flex; gap:18px; overflow-x:auto; padding:6px 2px 22px; scrollbar-width:thin; scroll-snap-type:x mandatory; }
+  .rail::-webkit-scrollbar { height:6px; }
+  .rail::-webkit-scrollbar-thumb { background:var(--line); border-radius:3px; }
+  .chip {
+    flex:0 0 auto; scroll-snap-align:start; width:160px; height:200px; border-radius:16px;
+    position:relative; overflow:hidden; border:1px solid var(--line);
+    background-size:cover; background-position:center; transition:transform .4s, border-color .4s;
+  }
+  .chip:hover { transform:translateY(-6px); border-color:var(--gold); }
+  .chip::after { content:""; position:absolute; inset:0; background:linear-gradient(180deg,transparent 40%,rgba(12,11,9,.85)); }
+  .chip b { position:absolute; bottom:14px; left:14px; z-index:2; font-family:var(--serif); font-size:18px; letter-spacing:2px; }
+  .chip em { position:absolute; bottom:46px; left:14px; z-index:2; font-style:normal; font-size:11px; color:var(--jade); letter-spacing:1px; }
+
+  /* ---------- Modules ---------- */
+  .modules { padding:90px 0; }
+  .sec-title { margin-bottom:54px; }
+  .sec-title .k { font-family:var(--serif); font-style:italic; color:var(--gold-soft); font-size:16px; letter-spacing:2px; }
+  .sec-title h2 { font-family:var(--sans); font-weight:800; font-size:clamp(30px,4.5vw,46px); margin-top:8px; letter-spacing:1px; }
+  .sec-title .ln { width:60px; height:2px; background:linear-gradient(90deg,var(--gold),transparent); margin-top:18px; }
+  .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:22px; }
+  .card {
+    border:1px solid var(--line); border-radius:20px; padding:30px 28px;
+    background:linear-gradient(160deg,var(--panel),var(--ink-2));
+    position:relative; overflow:hidden; transition:transform .4s, border-color .4s;
+    opacity:0; transform:translateY(40px);
+  }
+  .card.in { opacity:1; transform:none; transition:opacity .7s, transform .7s, border-color .4s; }
+  .card:hover { border-color:var(--gold); transform:translateY(-5px); }
+  .card .no { font-family:var(--serif); font-style:italic; color:var(--gold); font-size:15px; opacity:.7; }
+  .card h4 { font-family:var(--serif); font-size:23px; letter-spacing:2px; margin:12px 0 12px; }
+  .card p { color:var(--muted); font-size:14.5px; }
+  .card .tags { margin-top:16px; display:flex; flex-wrap:wrap; gap:8px; }
+  .card .tags span { font-size:11px; color:var(--gold-soft); border:1px solid var(--line); padding:4px 10px; border-radius:20px; }
+  .card .glow { position:absolute; right:-40px; top:-40px; width:140px; height:140px; border-radius:50%; background:radial-gradient(var(--gold),transparent 70%); opacity:.07; }
+  .c-wide { grid-column:span 7; }
+  .c-mid { grid-column:span 5; }
+  .c-third { grid-column:span 4; }
+  .c-half { grid-column:span 6; }
+
+  /* ---------- Capability (glass / nature) ---------- */
+  .cap { padding:80px 0; border-top:1px solid var(--line); position:relative; }
+  .cap::before {
+    content:""; position:absolute; inset:0;
+    background:
+      radial-gradient(60% 50% at 80% 20%, rgba(138,168,136,0.10), transparent 70%),
+      radial-gradient(50% 50% at 10% 90%, rgba(184,115,51,0.10), transparent 70%);
+    pointer-events:none;
+  }
+  .cap-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:20px; position:relative; }
+  .glass {
+    border:1px solid rgba(236,228,214,0.09); border-radius:18px; padding:26px 24px;
+    background:linear-gradient(160deg, rgba(236,228,214,0.06), rgba(236,228,214,0.02));
+    backdrop-filter:blur(10px); transition:transform .4s, background .4s;
+  }
+  .glass:hover { transform:translateY(-4px); background:linear-gradient(160deg, rgba(236,228,214,0.10), rgba(236,228,214,0.03)); }
+  .glass h5 { font-family:var(--serif); font-size:19px; letter-spacing:2px; color:var(--gold-soft); margin-bottom:10px; }
+  .glass p { color:var(--muted); font-size:14px; }
+
+  /* ---------- Disclaimer ---------- */
+  .disc {
+    margin:30px auto 0; max-width:1180px;
+    border:1px solid rgba(184,115,51,0.35); border-left:3px solid var(--copper);
+    background:rgba(184,115,51,0.06); border-radius:12px; padding:18px 22px;
+  }
+  .disc b { color:var(--copper); font-family:var(--serif); letter-spacing:2px; }
+  .disc p { color:var(--muted); font-size:13.5px; margin-top:6px; }
+
+  /* ---------- Footer ---------- */
+  footer { padding:54px 0 40px; border-top:1px solid var(--line); margin-top:70px; }
+  .foot { display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:20px; }
+  .foot .seal-lg { font-family:var(--serif); font-size:22px; letter-spacing:3px; color:var(--gold-soft); }
+  .foot small { color:var(--muted); font-size:12.5px; letter-spacing:1px; }
+
+  @keyframes rise { to { opacity:1; transform:none; } }
+  @keyframes riseUp { to { transform:translateY(0); } }
+  @keyframes drop { 0%{transform:scaleY(0);transform-origin:top} 50%{transform:scaleY(1);transform-origin:top} 51%{transform-origin:bottom} 100%{transform:scaleY(0);transform-origin:bottom} }
+
+  /* scroll-driven parallax via CSS only */
+  .parallax { will-change:transform; }
+
+  @media (max-width:880px) {
+    .c-wide,.c-mid,.c-third,.c-half { grid-column:span 12; }
+    .cap-grid { grid-template-columns:1fr; }
+    .nav-links a:not(.btn-enter) { display:none; }
+    .hero h1 { font-size:38px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav">
+  <div class="brand">
+    <div class="seal">本</div>
+    <div><b>本草识微</b><span>HERB · RECOGNITION</span></div>
+  </div>
+  <div class="nav-links">
+    <a href="#modules">功能</a>
+    <a href="#capability">能力</a>
+    <a href="#disclaimer">提示</a>
+    <a class="btn-enter" href="index.html">进入工作台 →</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-bg parallax" id="heroBg"></div>
+  <div class="hero-veil"></div>
+  <div class="wrap hero-inner">
+    <div class="kicker">— 望闻问切，始于识形 —</div>
+    <h1>
+      <span class="reveal"><span>中草药</span></span>
+      <span class="reveal"><span><em>多模态</em>智能识别</span></span>
+      <span class="reveal"><span>与本草解读</span></span>
+    </h1>
+    <p class="lead">以影像与文字为输入，融合视觉理解、知识图谱与检索增强问答，让每一株草木的性味、归经、功效与配伍，皆有迹可循。</p>
+    <div class="hero-cta">
+      <a class="cta-main" href="index.html">进入工作台</a>
+      <a class="cta-ghost" href="#modules">了解五大功能 ↓</a>
+    </div>
+  </div>
+  <div class="scroll-hint">向下滚动<i></i></div>
+</section>
+
+<!-- HERB RAIL -->
+<section class="herb-rail">
+  <div class="wrap">
+    <div class="rail-head">
+      <h3>本草掠影</h3><span>SCROLL · 常见药材一览</span>
+    </div>
+    <div class="rail" id="rail"></div>
+  </div>
+</section>
+
+<!-- MODULES -->
+<section class="modules" id="modules">
+  <div class="wrap">
+    <div class="sec-title">
+      <div class="k">Five Modules</div>
+      <h2>五大功能模块</h2>
+      <div class="ln"></div>
+    </div>
+    <div class="grid">
+      <div class="card c-wide">
+        <span class="glow"></span>
+        <div class="no">01</div>
+        <h4>图像识别</h4>
+        <p>上传原植物、饮片或干药材图片，基于 Swin-Tiny 视觉编码与跨模态融合，输出 Top-5 药材名称与置信度，并对易混药材作专门区分。</p>
+        <div class="tags"><span>视觉分类</span><span>Top-5</span><span>易混鉴别</span></div>
+      </div>
+      <div class="card c-mid">
+        <div class="no">02</div>
+        <h4>中医药知识图谱</h4>
+        <p>药材—功效—病症—方剂—配伍禁忌的关系网络，力导向可视化，聚焦单药即可查看其配伍与禁忌（红虚线十八反、橙虚线十九畏）。</p>
+        <div class="tags"><span>NetworkX</span><span>力导向图</span><span>配伍推理</span></div>
+      </div>
+      <div class="card c-third">
+        <div class="no">03</div>
+        <h4>特性检索</h4>
+        <p>以性味、归经、功效为条件检索药材卡片网格，并附带方剂推荐，支持完全匹配与部分匹配。</p>
+        <div class="tags"><span>语义检索</span><span>方剂推荐</span></div>
+      </div>
+      <div class="card c-third">
+        <div class="no">04</div>
+        <h4>RAG 增强对话</h4>
+        <p>图文混合多轮问答，本地识别 + 知识图谱检索 + 大模型生成，回答附「知识库来源」标注，无 Key 自动降级本地检索。</p>
+        <div class="tags"><span>RAG</span><span>来源标注</span><span>降级兜底</span></div>
+      </div>
+      <div class="card c-third">
+        <div class="no">05</div>
+        <h4>可解释与端侧导出</h4>
+        <p>Grad-CAM 热力图展示识别依据；导出纯视觉 TorchScript 模型供端侧快速识图，兼顾可解释性与部署灵活性。</p>
+        <div class="tags"><span>Grad-CAM</span><span>TorchScript</span><span>端侧</span></div>
+      </div>
+    </div>
+
+    <div class="disc" id="disclaimer">
+      <b>医疗风险提示</b>
+      <p>本系统仅供学习、科普与辅助参考，不能替代专业中医师的诊断与处方。涉及用药、剂量与配伍禁忌，请务必咨询具备资质的执业医师。系统识别结果存在误差可能，切勿据此自行用药。</p>
+    </div>
+  </div>
+</section>
+
+<!-- CAPABILITY -->
+<section class="cap" id="capability">
+  <div class="wrap">
+    <div class="sec-title">
+      <div class="k">Under the Hood</div>
+      <h2>核心能力</h2>
+      <div class="ln"></div>
+    </div>
+    <div class="cap-grid">
+      <div class="glass">
+        <h5>视觉理解</h5>
+        <p>Swin-Tiny + CBAM 注意力微调，纯视觉识别准确率 95.48%，Top-5 达 99.65%。</p>
+      </div>
+      <div class="glass">
+        <h5>多模态融合</h5>
+        <p>跨模态注意力（HCA）融合图像与文本，整体准确率达 99.95%，文本辅助增益 +4.47%。</p>
+      </div>
+      <div class="glass">
+        <h5>小样本学习</h5>
+        <p>原型网络（Prototypical Network）缓解长尾与稀缺药材样本不足，覆盖 163 类。</p>
+      </div>
+      <div class="glass">
+        <h5>知识图谱推理</h5>
+        <p>构建药材—功效—病症—方剂—配伍禁忌实体关系，支撑药性解读与方剂推荐。</p>
+      </div>
+      <div class="glass">
+        <h5>检索增强问答</h5>
+        <p>本地 BERT 语义检索 + 大模型生成，回答标注知识库来源，降低幻觉风险。</p>
+      </div>
+      <div class="glass">
+        <h5>可解释 AI</h5>
+        <p>Grad-CAM 输出模型关注区域热力图，让识别依据可视化、可信、可复核。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap foot">
+    <div>
+      <div class="seal-lg">本草识微</div>
+      <small>中草药多模态识别与本草解读系统 · 视觉 + 文本 + 知识图谱</small>
+    </div>
+    <small>© 2026 Herb Recognition · 仅供学习科普用途</small>
+  </div>
+</footer>
+
+<script>
+  // herb rail data (uses local web herb thumbnails)
+  const herbs = [
+    {n:"枸杞子", e:"滋补肝肾", img:"hero.jpg"},
+    {n:"黄芪", e:"补气固表", img:"hero.jpg"},
+    {n:"金银花", e:"清热解毒", img:"hero.jpg"},
+    {n:"陈皮", e:"理气健脾", img:"hero.jpg"},
+    {n:"当归", e:"补血活血", img:"hero.jpg"},
+    {n:"甘草", e:"调和诸药", img:"hero.jpg"},
+    {n:"石斛", e:"益胃生津", img:"hero.jpg"}
+  ];
+  const rail = document.getElementById('rail');
+  herbs.forEach(h => {
+    const c = document.createElement('div');
+    c.className = 'chip';
+    c.style.backgroundImage = `url('${h.img}')`;
+    c.innerHTML = `<em>${h.e}</em><b>${h.n}</b>`;
+    rail.appendChild(c);
+  });
+
+  // scroll-driven parallax for hero bg (CSS transform via JS scroll, no library)
+  const heroBg = document.getElementById('heroBg');
+  let ticking = false;
+  window.addEventListener('scroll', () => {
+    if (!ticking) {
+      window.requestAnimationFrame(() => {
+        const y = window.scrollY;
+        heroBg.style.transform = `scale(1.05) translateY(${y * 0.18}px)`;
+        ticking = false;
+      });
+      ticking = true;
+    }
+  });
+
+  // reveal cards on scroll
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('in'); });
+  }, { threshold: 0.18 });
+  document.querySelectorAll('.card').forEach(c => io.observe(c));
+</script>
+</body>
+</html>
