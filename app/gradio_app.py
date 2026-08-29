@@ -15,6 +15,8 @@ from utils.data_utils import build_label_maps
 from app.llm_client import LLMClient, LLMError
 from app.graph_view import build_graph_html
 from app.rag_retriever import RAGRetriever
+from app import ui_cards
+from app.ui_theme import build_theme, GLOBAL_CSS, HEADER_HTML, DISCLAIMER_HTML
 
 
 # 常见口语/饮片别名 -> 规范名（用于 AI 对话中自然语言药材名识别）
@@ -279,6 +281,30 @@ class HerbDemo:
                         for r in formula] if formula else [],
             "disclaimer": _DISCLAIMER,
         }
+
+    def predict_html(self, image, text: str = "") -> tuple:
+        """图片识别页签：结构化识别 + 渲染为宣纸质感卡片 HTML（新中式 UI）。"""
+        pred = self.predict_json(image, text)
+        if pred.get("error"):
+            return (ui_cards.note_card(
+                pred.get("message", "请上传图片或输入文本描述。")), DISCLAIMER_HTML)
+        top5 = pred.get("top5") or []
+        if top5:
+            pred["_info"] = self.kg.get_info(top5[0].get("name")) or {}
+        return ui_cards.render_predict_cards(pred), DISCLAIMER_HTML
+
+    def search_text_html(self, text: str) -> str:
+        """特性检索页签：检索结果渲染为卡片网格（新中式 UI）。"""
+        if not text or not text.strip():
+            return ui_cards.note_card(
+                "请输入特性描述，例如：味甘平，归肝肾经，滋补肝肾、益精明目。\n\n"
+                "支持条件：\n"
+                "- 性味：甘/苦/辛/酸/咸/淡/涩 + 寒/热/温/凉/平（如 甘平、甘微寒）\n"
+                "- 归经：肝/心/脾/肺/肾/胃/胆/大肠/小肠/膀胱/三焦/心包（如 归肝肾经）\n"
+                "- 功效：滋补/清热/活血/安神/化痰等（如 滋补肝肾、清热明目）",
+                "使用说明")
+        result = self.kg.search_herbs_by_text(text)
+        return ui_cards.render_search_cards(result)
 
     def _similar_herbs(self, name: str, top_k: int = 5) -> list:
         """相似药推荐：与 name 功效分类相近的其它药材（结构化，供 JSON 接口）。"""
@@ -707,45 +733,44 @@ class HerbDemo:
 def launch(config: Dict[str, Any], ckpt_path: str = None,
            model: torch.nn.Module = None, device: torch.device = None):
     demo_app = HerbDemo(config, ckpt_path, model=model, device=device)
-    with gr.Blocks(title="中草药多模态识别") as ui:
-        gr.Markdown("# 中草药多模态识别系统\n支持「图片识别」与「特性检索」两种模式。")
+    with gr.Blocks(title="中草药多模态识别系统",
+                   theme=build_theme(), css=GLOBAL_CSS) as ui:
+        # 头部：印章 + 标题横幅（新中式）
+        gr.HTML(HEADER_HTML)
         # 全局医疗风险提示横幅（安全红线：见 docs/plan.md 验收项 3）
-        gr.Markdown(
-            "<div style='background:#fdf0ef;border:1px solid #e74c3c;"
-            "border-radius:8px;padding:10px 14px;color:#a93226;font-size:13px'>"
-            "⚠️ <b>医疗风险提示</b>：本站为<b>中草药科普与学习演示</b>，"
-            "所有识别与分析结果<b>仅供学习参考，不构成医疗诊断、处方或用药建议</b>。"
-            "中草药辨识与用药因人因证而异，请务必咨询<b>执业中医师或药师</b>，切勿自行用药。"
-            "</div>")
+        gr.HTML(DISCLAIMER_HTML)
         with gr.Tabs():
             with gr.Tab("图片识别"):
                 gr.Markdown("上传草药图片（可选）或直接输入文本描述："
-                            "图片与文本都有时走多模态识别（Top-3），"
+                            "图片与文本都有时走多模态识别（Top-5），"
                             "只填文本时按特性检索匹配药材（Top-5）。"
-                            "识别结果含毒性警示与风险提示；置信度较低时将提示人工复核，"
-                            "结果仅供科普参考。")
+                            "识别结果含毒性警示与配伍风险；置信度较低时将提示人工复核，"
+                            "结果仅供科普参考。",
+                            elem_classes=["tcm-hint"])
                 with gr.Row():
-                    img_in = gr.Image(label="上传草药图片(可选，可留空)")
+                    img_in = gr.Image(label="上传草药图片（可选，可留空）")
                     txt_in = gr.Textbox(label="文本描述",
                                         placeholder="如：味甘平，归肝肾经，滋补肝肾、益精明目")
-                btn = gr.Button("识别")
+                btn = gr.Button("识别", variant="primary")
                 with gr.Row():
-                    out_pred = gr.Textbox(label="识别结果 (图片 Top-3 / 文本 Top-5)")
-                    out_kg = gr.Textbox(label="药性说明 / 相似药 / 方剂推荐 (知识图谱)")
-                btn.click(demo_app.predict, [img_in, txt_in], [out_pred, out_kg])
+                    out_pred = gr.HTML(label="识别结果")
+                    out_kg = gr.HTML(label="药性说明 / 相似药 / 方剂 / 风险")
+                btn.click(demo_app.predict_html, [img_in, txt_in], [out_pred, out_kg])
             with gr.Tab("特性检索"):
                 gr.Markdown("输入药性/归经/功效特性，返回**所有符合的中草药**："
-                            "完全匹配优先，部分匹配在后，并附方剂推荐（含毒性警示）。"
-                            "结果仅供科普参考，不构成用药建议。")
+                            "完全匹配优先，部分匹配在后，并附毒性警示。"
+                            "结果仅供科普参考，不构成用药建议。",
+                            elem_classes=["tcm-hint"])
                 search_in = gr.Textbox(label="特性描述", lines=2,
                                        placeholder="如：味甘平，归肝肾经，滋补肝肾、益精明目")
-                search_btn = gr.Button("检索")
-                search_out = gr.Markdown(label="检索结果")
-                search_btn.click(demo_app.search_text, search_in, search_out)
+                search_btn = gr.Button("检索", variant="primary")
+                search_out = gr.HTML(label="检索结果")
+                search_btn.click(demo_app.search_text_html, search_in, search_out)
             with gr.Tab("模型关注区域 (Grad-CAM)"):
                 gr.Markdown("上传图片（可选填文本），查看模型识别时**重点关注的图像部位**："
                             "红色/黄色区域即模型判断依据，用于验证模型是否真的在看草药本体。"
-                            "热图仅用于模型可解释性演示，不构成识别结论或用药建议。")
+                            "热图仅用于模型可解释性演示，不构成识别结论或用药建议。",
+                            elem_classes=["tcm-hint"])
                 with gr.Row():
                     cam_img_in = gr.Image(label="上传草药图片")
                     cam_txt_in = gr.Textbox(label="文本描述(可选，留空则走纯视觉分支)",
@@ -762,7 +787,8 @@ def launch(config: Dict[str, Any], ckpt_path: str = None,
                     "未配置 API Key 或调用失败时自动降级为本地知识图谱结果。"
                     "**支持图文混合问答**：可上传药材图片 + 输入问题，"
                     "系统先识别图片再结合问题回答。"
-                    "对话内容仅供科普交流，含毒性药材时系统将强制警示，切勿据此自行用药。")
+                    "对话内容仅供科普交流，含毒性药材时系统将强制警示，切勿据此自行用药。",
+                    elem_classes=["tcm-hint"])
                 chat_hist = gr.State([])
                 # 本环境 Gradio(6.20.0) 的 Chatbot 无 type 参数，固定使用 messages 格式 list[dict]
                 chat_ui = gr.Chatbot(label="AI 对话", height=420)

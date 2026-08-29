@@ -28,11 +28,15 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 from app.gradio_app import HerbDemo
 from app.llm_client import LLMClient, LLMError
 from utils.config import load_config
+
+# 新中式前端静态目录（web/index.html + style.css + app.js）
+WEB_DIR = os.path.join(ROOT, "web")
 
 app = FastAPI(
     title="中草药多模态识别 API",
@@ -167,10 +171,11 @@ async def predict(image: UploadFile = None, text: str = Form("")):
 
 @app.post("/search")
 async def search(payload: dict):
-    """纯文本特性检索：性味/归经/功效，返回所有符合的中草药。"""
+    """纯文本特性检索：性味/归经/功效，返回所有符合的中草药（结构化）。"""
     demo = get_demo()
     text = (payload or {}).get("text", "")
-    return {"query": text, "result": demo.search_text(text),
+    result = demo.kg.search_herbs_by_text(text)
+    return {"query": text, "result": result,
             "disclaimer": _DISCLAIMER}
 
 
@@ -188,6 +193,28 @@ async def explain(image: UploadFile, text: str = Form("")):
     # HTTP 头只支持 latin-1，中文说明需 URL 编码（客户端 unquote 还原）
     return Response(content=buf.getvalue(), media_type="image/png",
                     headers={"X-Explain-Info": quote(info)})
+
+
+@app.get("/graph")
+def graph(focus: str = ""):
+    """药材关系图谱：返回力导向图 JSON（nodes + links + 分类配色）。
+
+    query 参数:
+      focus  聚焦药材名（可选）；为空则返回全图（节点较多，前端自动适配）
+    """
+    demo = get_demo()
+    focus = (focus or "").strip() or None
+    from app.graph_view import _CATEGORY_COLORS
+    data = demo.kg.export_graph_json(focus=focus)
+    return {**data, "categoryColors": _CATEGORY_COLORS,
+            "focus": focus}
+
+
+@app.get("/herbs")
+def herbs():
+    """返回全部药材名列表（供前端 datalist 自动补全）。"""
+    demo = get_demo()
+    return {"herbs": demo.kg.all_names()}
 
 
 @app.post("/chat")
@@ -267,6 +294,11 @@ async def chat(image: UploadFile = None, question: str = Form(""),
             "rag_sources": rag_sources[:4],
             **pred,
         }
+
+
+# 挂载静态前端（须在 API 路由定义之后，避免覆盖 /predict 等接口）
+if os.path.isdir(WEB_DIR):
+    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
 
 
 if __name__ == "__main__":

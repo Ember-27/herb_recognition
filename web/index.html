@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>本草识鉴 · 中草药多模态识别系统</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ======= 头部：印章 + 标题 ======= -->
+<header class="tcm-header">
+  <div class="tcm-seal" aria-hidden="true">本草<br>识鉴</div>
+  <div class="tcm-header-text">
+    <h1 class="tcm-title">本草识鉴</h1>
+    <p class="tcm-subtitle">中草药多模态智能识别系统 · 本地模型 + 知识图谱</p>
+  </div>
+  <div class="tcm-header-badge">科普演示 · 非医疗诊断</div>
+</header>
+
+<!-- ======= 书签式页签导航 ======= -->
+<nav class="tcm-tabs" role="tablist">
+  <button class="tab active" data-tab="recognize" role="tab" aria-selected="true">图片识别</button>
+  <button class="tab" data-tab="search" role="tab" aria-selected="false">特性检索</button>
+  <button class="tab" data-tab="gradcam" role="tab" aria-selected="false">Grad-CAM</button>
+  <button class="tab" data-tab="chat" role="tab" aria-selected="false">AI 对话</button>
+  <button class="tab" data-tab="graph" role="tab" aria-selected="false">关系图谱</button>
+</nav>
+
+<main class="tcm-main">
+
+  <!-- ======= 模块 1：图片识别（药材档案大卡） ======= -->
+  <section id="recognize" class="module active" role="tabpanel">
+    <div class="module-head">
+      <h2>图片识别</h2>
+      <p class="module-desc">上传药材图片，AI 给出 Top-5 识别结果与药性、配伍等完整档案。</p>
+    </div>
+
+    <div class="uploader" data-uploader="recognize">
+      <input type="file" accept="image/*" hidden data-file-input>
+      <div class="uploader-drop" data-drop-zone>
+        <div class="uploader-icon" aria-hidden="true">🖼</div>
+        <div class="uploader-text">
+          <b>拖拽图片到此处</b>，或 <u data-click-hint>点击选择</u> · 支持 <u>Ctrl+V</u> 粘贴截图
+        </div>
+        <div class="uploader-tip">示例：枸杞 / 黄芪 / 金银花 / 陈皮 等中草药照片</div>
+      </div>
+      <div class="uploader-preview" hidden>
+        <img alt="待识别图片预览">
+        <button type="button" class="btn-ghost btn-sm" data-clear>重新上传</button>
+      </div>
+    </div>
+
+    <div class="field-row">
+      <label class="field-label" for="recognize-text">补充描述（可选）</label>
+      <input id="recognize-text" class="text-input" type="text"
+             placeholder="例如：叶片椭圆、表面有细毛、味甘" maxlength="100">
+    </div>
+
+    <div class="action-row">
+      <button type="button" class="btn-primary" data-identify>开始识别</button>
+      <span class="action-hint">识别需加载本地模型，首次调用较慢，请耐心等待</span>
+    </div>
+
+    <div class="module-result" id="recognize-result" hidden>
+      <div class="result-loading" hidden><span class="spinner"></span> 正在识别中……</div>
+      <div id="recognize-cards"></div>
+    </div>
+  </section>
+
+  <!-- ======= 模块 2：特性检索（卡片网格） ======= -->
+  <section id="search" class="module" role="tabpanel">
+    <div class="module-head">
+      <h2>特性检索</h2>
+      <p class="module-desc">按「性味 + 归经 + 功效」描述检索药材，命中条件越多的排在前面。</p>
+    </div>
+
+    <div class="field-row">
+      <label class="field-label" for="search-text">检索条件</label>
+      <input id="search-text" class="text-input" type="text"
+             placeholder="例如：性味甘平 归肺经 补气"
+             list="search-examples">
+      <datalist id="search-examples">
+        <option value="性味甘 归肝经 清肝明目"></option>
+        <option value="性味苦寒 清热解毒"></option>
+        <option value="性温 补血"></option>
+        <option value="味甘 归肾经 固精缩尿"></option>
+      </datalist>
+    </div>
+
+    <div class="action-row">
+      <button type="button" class="btn-primary" data-search>检索</button>
+      <span class="action-hint">支持「甘/苦/寒/温」等性味、「归肺经」等归经、以及功效关键词</span>
+    </div>
+
+    <div class="module-result" id="search-result" hidden>
+      <div class="result-loading" hidden><span class="spinner"></span> 正在检索……</div>
+      <div class="search-summary" id="search-summary" hidden></div>
+      <div class="search-section" id="search-full" hidden></div>
+      <div class="search-section" id="search-partial" hidden></div>
+    </div>
+  </section>
+
+  <!-- ======= 模块 3：Grad-CAM（叠加图 + 滑块） ======= -->
+  <section id="gradcam" class="module" role="tabpanel">
+    <div class="module-head">
+      <h2>Grad-CAM 关注区域</h2>
+      <p class="module-desc">热力图展示模型判定药材类别时主要依据的图像部位，拖动滑块调节热力强度。</p>
+    </div>
+
+    <div class="uploader" data-uploader="gradcam">
+      <input type="file" accept="image/*" hidden data-file-input>
+      <div class="uploader-drop" data-drop-zone>
+        <div class="uploader-icon" aria-hidden="true">🖼</div>
+        <div class="uploader-text">
+          <b>拖拽图片到此处</b>，或 <u data-click-hint>点击选择</u> · 支持 <u>Ctrl+V</u> 粘贴截图
+        </div>
+        <div class="uploader-tip">本模块必须上传图片</div>
+      </div>
+      <div class="uploader-preview" hidden>
+        <img alt="待分析图片预览">
+        <button type="button" class="btn-ghost btn-sm" data-clear>重新上传</button>
+      </div>
+    </div>
+
+    <div class="action-row">
+      <button type="button" class="btn-primary" data-gradcam>生成热力图</button>
+      <span class="action-hint">需要再运行一次前向传播，约数秒</span>
+    </div>
+
+    <div class="module-result" id="gradcam-result" hidden>
+      <div class="result-loading" hidden><span class="spinner"></span> 正在生成热力图……</div>
+
+      <div class="gradcam-stage" hidden id="gradcam-stage">
+        <div class="gradcam-canvas-wrap">
+          <canvas id="gradcam-canvas" width="448" height="448"></canvas>
+        </div>
+        <div class="gradcam-controls">
+          <label for="gradcam-alpha">热力强度</label>
+          <input type="range" id="gradcam-alpha" min="0" max="100" value="45">
+          <span class="gradcam-alpha-val" id="gradcam-alpha-val">45%</span>
+        </div>
+        <div class="gradcam-info" id="gradcam-info"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======= 模块 4：AI 对话（聊天室） ======= -->
+  <section id="chat" class="module" role="tabpanel">
+    <div class="module-head">
+      <h2>AI 对话</h2>
+      <p class="module-desc">与 AI 讨论药材辨识与药性知识，可上传图片提问，回答附知识库来源。</p>
+    </div>
+
+    <div class="chatbox">
+      <div class="chat-history" id="chat-history">
+        <div class="chat-welcome">
+          <div class="chat-welcome-title">👋 您好，我是本草识鉴助手</div>
+          <div class="chat-welcome-text">
+            可以这样问我：<br>
+            · 「帮我看看这张图片是什么药材」<br>
+            · 「黄芪和人参有什么区别？」<br>
+            · 「性味甘平、归肺经的药材有哪些？」
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-compose">
+        <div class="chat-attach" id="chat-attach" hidden>
+          <img alt="随问题发送的图片">
+          <button type="button" class="btn-ghost btn-sm" data-attach-clear>移除</button>
+        </div>
+        <div class="chat-compose-row">
+          <button type="button" class="btn-attach" data-attach title="上传图片（可选）">🖼</button>
+          <textarea id="chat-input" class="chat-input" rows="2"
+                    placeholder="输入您的问题……（Enter 发送，Shift+Enter 换行）"></textarea>
+          <button type="button" class="btn-primary btn-send" data-send>发送</button>
+        </div>
+        <input type="file" accept="image/*" hidden id="chat-file">
+      </div>
+    </div>
+  </section>
+
+  <!-- ======= 模块 5：药材关系图谱（力导向网络图） ======= -->
+  <section id="graph" class="module" role="tabpanel">
+    <div class="module-head">
+      <h2>药材关系图谱</h2>
+      <p class="module-desc">力导向网络图：节点为药材，连线为关系（相须相使 / 十八反 / 十九畏 / 组成）。</p>
+    </div>
+
+    <div class="graph-toolbar">
+      <label class="field-label" for="graph-focus">聚焦药材</label>
+      <input id="graph-focus" class="text-input graph-focus-input" type="text"
+             list="graph-herbs" placeholder="输入药材名（如：枸杞）">
+      <datalist id="graph-herbs"></datalist>
+      <button type="button" class="btn-primary" data-graph-load>查看图谱</button>
+      <button type="button" class="btn-ghost" data-graph-all>全图浏览</button>
+    </div>
+
+    <div class="graph-stage">
+      <canvas id="graph-canvas" width="1040" height="620"></canvas>
+      <div class="graph-info" id="graph-info"></div>
+      <div class="graph-tip" id="graph-tip"></div>
+    </div>
+    <div class="graph-legend" id="graph-legend"></div>
+    <div class="graph-hint">
+      提示：可拖拽节点 / 滚轮缩放 / 按住空白拖动平移；点击节点查看详情，点击空白处取消选中。
+    </div>
+  </section>
+
+</main>
+
+<!-- ======= 页脚：免责声明（安全红线） ======= -->
+<footer class="tcm-disclaimer">
+  <strong>⚠️ 医疗风险提示</strong>：以上内容由本地识别模型与知识图谱自动生成，仅供
+  <strong>科普与学习参考</strong>，不构成任何医疗诊断、处方或用药建议。
+  中草药辨识与用药因人因证而异，请务必咨询 <strong>执业中医师或药师</strong>，切勿自行用药。
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

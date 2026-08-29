@@ -77,11 +77,30 @@ python main.py --mode train --config experiments/configs/default_config.yaml
 ### 5. 演示
 
 ```bash
+# A. 新中式 Web 前端（推荐，纯 HTML/CSS/JS 单页应用，托管于 FastAPI）
+python main.py --mode serve --port 8000
+# 打开 http://127.0.0.1:8000
+
+# B. Gradio 演示（调试/备用入口，已与新前端统一新中式主题）
 python main.py --mode demo --ckpt experiments/checkpoints/best_model.pth
 # 打开 http://127.0.0.1:7862
 ```
 
 > 未指定 `--ckpt` 时默认加载 `experiments/checkpoints/best_model.pth`；若该文件不存在会打印警告并使用随机模型（识别结果无意义），请先训练。
+
+#### 新中式 Web 前端（推荐入口）
+
+`web/` 目录下的单页应用（`index.html` + `style.css` + `app.js`），由 FastAPI 直接托管，无外部依赖、无需构建。包含 5 个功能页签：
+
+- **图片识别**：拖拽/点击/Ctrl+V 粘贴上传 → Top-5 识别 + 「药材档案大卡」（置信度徽章、药性详情、相似药、易混鉴别、配伍风险、经典方剂）
+- **特性检索**：输入性味/归经/功效 → 卡片网格，印章式「完全匹配/部分匹配」角标
+- **Grad-CAM**：上传图片生成热力图，滑块实时调节热力叠加透明度
+- **AI 对话**：聊天室式多轮对话，可附图提问，回答附「知识库来源」折叠卡片
+- **药材关系图谱**：力导向网络图（拖拽/缩放/点击），聚焦单药查看配伍与禁忌网络
+
+> 前端所有结果区均附医疗风险提示；图谱与特性检索接口返回结构化 JSON（`/graph`、`/herbs` 为新增图谱接口）。
+
+#### Gradio 演示（调试/备用）
 
 网页包含 5 个功能页签：
 
@@ -128,11 +147,14 @@ python main.py --mode serve --port 8000
 
 | 接口 | 说明 |
 |------|------|
+| `GET /` | 新中式 Web 前端单页应用（静态托管） |
 | `GET /health` | 健康检查，返回类别数与 LLM 可用状态 |
 | `POST /predict` | 图片+文本识别（multipart；`image` 留空则做纯文本特性检索），返回 Top-5 + 药性/相似药/方剂 |
-| `POST /search` | 纯文本特性检索（JSON: `{"text":"味甘平，归肝肾经"}`） |
+| `POST /search` | 纯文本特性检索（JSON: `{"text":"味甘平，归肝肾经"}`），返回结构化 `parsed/full/partial` |
 | `POST /explain` | Grad-CAM 热图（multipart，返回 PNG，说明在 `X-Explain-Info` 头，URL 编码） |
 | `POST /chat` | 外部 LLM 对话解释（multipart；`question` + 可选 `image` + 可选 `history` 多轮），返回 `answer` + 本地识别结果 |
+| `GET /graph` | 药材关系图谱力导向图 JSON（可选 `?focus=枸杞`；含 `nodes/links/categoryColors`） |
+| `GET /herbs` | 全部药材名列表（前端 datalist 自动补全用） |
 
 示例（Windows PowerShell）：
 
