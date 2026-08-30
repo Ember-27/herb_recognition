@@ -47,6 +47,19 @@ def _name_in(text: str, names) -> bool:
     return any(n in text for n in names)
 
 
+def _strip_pinyin(name: str) -> str:
+    """去掉模型标签中的括号拼音后缀：人参(renshen) -> 人参。
+
+    仅用于展示层与查询映射，数据文件（label2idx.json / CSV）保持原样。
+    """
+    if not name:
+        return name
+    idx = name.find("(")
+    if idx > 0:
+        return name[:idx].strip()
+    return name
+
+
 def _normalize_name(name: str) -> str:
     """别名归一化：让模型输出的异形/带后缀名称映射到图谱节点。
 
@@ -54,7 +67,9 @@ def _normalize_name(name: str) -> str:
        肉苁蓉根/肉苁蓉片 -> 肉苁蓉; 枳壳片/枳壳条 -> 枳壳
        首乌藤块/首乌藤片 -> 首乌藤; 玉竹条/玉竹片 -> 玉竹
        人参切片 -> 人参; 野菊花 -> 菊花(功效近似, 仅做候选)
+       人参(renshen) -> 人参（括号拼音后缀同样剥离）
     """
+    name = _strip_pinyin(name)
     if name in {"枸杞子", "枸杞"}:
         return "枸杞"
     if name in {"北沙参块", "北沙参条"}:

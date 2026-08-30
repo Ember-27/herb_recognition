@@ -46,7 +46,7 @@
         <div class="uploader-tip">示例：枸杞 / 黄芪 / 金银花 / 陈皮 等中草药照片</div>
       </div>
       <div class="uploader-preview" hidden>
-        <img alt="待识别图片预览">
+        <img alt="">
         <button type="button" class="btn-ghost btn-sm" data-clear>重新上传</button>
       </div>
     </div>
@@ -118,7 +118,7 @@
         <div class="uploader-tip">本模块必须上传图片</div>
       </div>
       <div class="uploader-preview" hidden>
-        <img alt="待分析图片预览">
+        <img alt="">
         <button type="button" class="btn-ghost btn-sm" data-clear>重新上传</button>
       </div>
     </div>
@@ -152,7 +152,7 @@
       <p class="module-desc">与 AI 讨论药材辨识与药性知识，可上传图片提问，回答附知识库来源。</p>
     </div>
 
-    <div class="chatbox">
+    <div class="chatbox" data-chat-drop>
       <div class="chat-history" id="chat-history">
         <div class="chat-welcome">
           <div class="chat-welcome-title">👋 您好，我是本草识鉴助手</div>
@@ -167,11 +167,13 @@
 
       <div class="chat-compose">
         <div class="chat-attach" id="chat-attach" hidden>
-          <img alt="随问题发送的图片">
+          <img src="images/_02/icons8-图片-25.png" alt="" onerror="this.src='images/_02/icons8-图片-25.png'">
           <button type="button" class="btn-ghost btn-sm" data-attach-clear>移除</button>
         </div>
         <div class="chat-compose-row">
-          <button type="button" class="btn-attach" data-attach title="上传图片（可选）">🖼</button>
+          <button type="button" class="btn-attach" data-attach title="从资源管理器选择图片">
+            <img src="images/_02/icons8-打开文件夹-48.png" alt="选择图片">
+          </button>
           <textarea id="chat-input" class="chat-input" rows="2"
                     placeholder="输入您的问题……（Enter 发送，Shift+Enter 换行）"></textarea>
           <button type="button" class="btn-primary btn-send" data-send>发送</button>
@@ -216,6 +218,42 @@
   <strong>科普与学习参考</strong>，不构成任何医疗诊断、处方或用药建议。
   中草药辨识与用药因人因证而异，请务必咨询 <strong>执业中医师或药师</strong>，切勿自行用药。
 </footer>
+
+<!-- ======= 右侧悬浮收藏夹 ======= -->
+<button id="favToggle" class="fav-toggle" type="button" title="我的收藏">
+  <span class="fav-toggle-icon">★</span>
+  <span class="fav-toggle-label">收藏</span>
+  <span id="favCount" class="fav-count" hidden>0</span>
+</button>
+
+<div id="favDrawer" class="fav-drawer" hidden>
+  <div class="fav-drawer-head">
+    <h2 class="fav-drawer-title">我的收藏</h2>
+    <div class="fav-drawer-actions">
+      <button id="favClear" class="fav-mini-btn" type="button" title="清空当前分类">清空</button>
+      <button id="favClose" class="fav-mini-btn" type="button" title="关闭">✕</button>
+    </div>
+  </div>
+  <div class="fav-tabs">
+    <button class="fav-tab active" data-favtab="herb" type="button">药材</button>
+    <button class="fav-tab" data-favtab="chat" type="button">对话</button>
+  </div>
+  <div id="favList" class="fav-list"></div>
+  <div id="favEmpty" class="fav-empty" hidden>暂无收藏，点击内容上的 ★ 即可收藏。</div>
+</div>
+<div id="favMask" class="fav-mask" hidden></div>
+
+<!-- 收藏对话详情弹窗 -->
+<div id="favDetail" class="fav-detail" hidden>
+  <div class="fav-detail-card">
+    <div class="fav-detail-head">
+      <span class="fav-detail-title">对话详情</span>
+      <button type="button" class="fav-detail-close" data-fav-detail-close aria-label="关闭">×</button>
+    </div>
+    <div id="favDetailBody" class="fav-detail-body"></div>
+  </div>
+</div>
+<div id="favDetailMask" class="fav-mask" hidden></div>
 
 <script src="app.js"></script>
 </body>

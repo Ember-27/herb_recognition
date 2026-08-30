@@ -1,10 +1,10 @@
-"""外部 LLM 客户端封装（OpenAI 兼容 /chat/completions 接口，默认对接智谱 GLM）。
+"""外部 LLM 客户端封装（OpenAI 兼容 /chat/completions 接口，默认对接 DeepSeek）。
 
 配置优先级（环境变量 > 配置文件 > 内置默认值）:
-    ZHIPU_API_KEY / LLM_API_KEY   API Key（敏感信息：仅从环境变量读取，绝不写入代码/配置文件；
-                                  ZHIPU_API_KEY 优先）
-    LLM_BASE_URL                  接口地址，默认 https://open.bigmodel.cn/api/paas/v4
-    LLM_MODEL                     模型名，默认 glm-4.7-flash
+    DEEPSEEK_API_KEY / ZHIPU_API_KEY / LLM_API_KEY   API Key（敏感信息：仅从环境变量读取，
+                                                      绝不写入代码/配置文件；DeepSeek 优先）
+    LLM_BASE_URL                  接口地址，默认 https://api.deepseek.com/v1
+    LLM_MODEL                     模型名，默认 deepseek-v4-flash
     LLM_CONFIG                    llm_config.yaml 路径（可选），其中 api_key 建议留空走环境变量
 
 依赖 httpx（fastapi 自带依赖），无需新增第三方包。
@@ -16,8 +16,8 @@ from typing import Dict, List, Optional
 import httpx
 import yaml
 
-_DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
-_DEFAULT_MODEL = "glm-4-flash"
+_DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
+_DEFAULT_MODEL = "deepseek-v4-flash"
 # 限流/服务端临时错误码：自动退避重试（演示高峰期可显著降低降级概率）
 _RETRY_STATUS = {429, 500, 502, 503, 504}
 _MAX_RETRIES = 3
@@ -62,7 +62,8 @@ class LLMClient:
                          or base_url or cfg.get("base_url") or _DEFAULT_BASE_URL)
         self.model = (os.environ.get("LLM_MODEL")
                       or model or cfg.get("model") or _DEFAULT_MODEL)
-        self.api_key = (os.environ.get("ZHIPU_API_KEY")
+        self.api_key = (os.environ.get("DEEPSEEK_API_KEY")
+                        or os.environ.get("ZHIPU_API_KEY")
                         or os.environ.get("LLM_API_KEY")
                         or api_key or cfg.get("api_key") or "")
         self.timeout = float(os.environ.get("LLM_TIMEOUT")
@@ -80,8 +81,8 @@ class LLMClient:
     def chat(self, messages: List[Dict[str, str]]) -> str:
         """多轮对话。返回 LLM 回答文本；未配置或调用失败时抛 LLMError。"""
         if not self.api_key:
-            raise LLMError("未配置 ZHIPU_API_KEY / LLM_API_KEY 环境变量"
-                           "（可执行 $env:ZHIPU_API_KEY=\"...\" 设置）")
+            raise LLMError("未配置 DEEPSEEK_API_KEY / ZHIPU_API_KEY / LLM_API_KEY 环境变量"
+                           "（可执行 $env:DEEPSEEK_API_KEY=\"...\" 设置）")
         if not self.base_url:
             raise LLMError("未配置 LLM_BASE_URL")
         url = self.base_url.rstrip("/") + "/chat/completions"

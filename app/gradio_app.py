@@ -9,7 +9,7 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
 from models.classifier import build_classifier
-from knowledge_graph.kg_builder import build_knowledge_graph, _normalize_name
+from knowledge_graph.kg_builder import build_knowledge_graph, _normalize_name, _strip_pinyin
 from utils.config import get_device
 from utils.data_utils import build_label_maps
 from app.llm_client import LLMClient, LLMError
@@ -182,7 +182,8 @@ class HerbDemo:
             logits = self.model.predict(tensor, texts, device=self.device)
             probs = torch.softmax(logits, dim=1)[0]
             topk = torch.topk(probs, min(3, len(probs)))
-        preds = [(self.idx2label[int(i)], float(p)) for i, p in zip(topk.indices, topk.values)]
+        preds = [(_strip_pinyin(self.idx2label[int(i)]), float(p))
+                 for i, p in zip(topk.indices, topk.values)]
         result = "\n".join([f"{name}: {prob*100:.1f}%" for name, prob in preds])
         # 低置信度人工复核引导（需求 1.5-2 / 创新项 IN10）
         if preds and preds[0][1] < _CONFIDENCE_THRESHOLD:
@@ -235,7 +236,7 @@ class HerbDemo:
                 "mode": "text_search",
                 "query": text,
                 "top5": [{
-                    "name": it["name"],
+                    "name": _strip_pinyin(it["name"]),
                     "score": it["score"],
                     "dims": {k: bool(v) for k, v in it["dims"].items()},
                     "hits": {k: list(v) for k, v in it["hits"].items()},
@@ -261,8 +262,8 @@ class HerbDemo:
             probs = torch.softmax(logits, dim=1)[0]
             topk = torch.topk(probs, min(5, len(probs)))
         preds = [{
-            "name": self.idx2label[int(i)], "prob": float(p),
-            "toxicity": (self.kg.get_info(self.idx2label[int(i)]) or {})
+            "name": _strip_pinyin(self.idx2label[int(i)]), "prob": float(p),
+            "toxicity": (self.kg.get_info(_strip_pinyin(self.idx2label[int(i)])) or {})
                         .get("toxicity", "无毒"),
         } for i, p in zip(topk.indices, topk.values)]
         top_name = preds[0]["name"]
@@ -544,7 +545,7 @@ class HerbDemo:
         # 4) 调用 LLM；未配置或失败时降级为本地知识图谱结果
         llm = LLMClient()
         if not llm.available:
-            answer = (f"{context}\n\n（注：未配置 ZHIPU_API_KEY，以上为本地知识图谱结果；"
+            answer = (f"{context}\n\n（注：未配置 DEEPSEEK_API_KEY，以上为本地知识图谱结果；"
                       f"配置后可获得更自然的对话解释。）")
         else:
             try:
@@ -783,7 +784,7 @@ def launch(config: Dict[str, Any], ckpt_path: str = None,
             with gr.Tab("AI 对话"):
                 gr.Markdown(
                     "与 AI 探讨药材：输入问题（如「枸杞和菊花能一起用吗？」），"
-                    "系统先做**本地特性检索**提供上下文，再调用智谱 GLM 生成回答；"
+                    "系统先做**本地特性检索**提供上下文，再调用 DeepSeek 生成回答；"
                     "未配置 API Key 或调用失败时自动降级为本地知识图谱结果。"
                     "**支持图文混合问答**：可上传药材图片 + 输入问题，"
                     "系统先识别图片再结合问题回答。"

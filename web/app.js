@@ -14,6 +14,13 @@ function esc(s) {
     .replace(/"/g, "&quot;");
 }
 
+/** 统一中药名展示格式：去掉括号拼音后缀（人参(renshen) -> 人参），数据文件保留原样 */
+function cleanName(name) {
+  if (!name || typeof name !== "string") return name || "";
+  var idx = name.indexOf("(");
+  return idx > 0 ? name.slice(0, idx).trim() : name;
+}
+
 /** 简易 Markdown：加粗 / 换行 / 无序列表 / 空行分段 */
 function mdToHtml(md) {
   if (!md) return "";
@@ -184,6 +191,263 @@ $("[data-identify]").addEventListener("click", async function () {
   }
 });
 
+/* ============================================================
+   收藏夹（后端 JSON 持久化）
+   ============================================================ */
+var favTab = "herb";          // 当前抽屉内显示的收藏分类
+var favData = { herbs: [], chats: [] };
+
+function favStarHerb(name, extra) {
+  // 生成药材收藏星标按钮；extra 为附带的 info 对象（可选）
+  var info = extra ? encodeURIComponent(JSON.stringify(extra)) : "";
+  return '<button type="button" class="fav-star" data-fav-herb="' + esc(name) +
+    '" data-fav-info="' + info + '" title="收藏该药材">★</button>';
+}
+
+async function apiAddHerb(name, info) {
+  try {
+    var fd = new FormData();
+    fd.append("name", name);
+    if (info) fd.append("info", JSON.stringify(info));
+    var resp = await fetch("/favorites/herb", { method: "POST", body: fd });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    var data = await resp.json();
+    if (data.ok && data.duplicate) {
+      toast("「" + name + "」已在收藏中");
+    } else if (data.ok) {
+      toast("已收藏「" + name + "」");
+    }
+    await refreshFavCount();
+    return data;
+  } catch (e) {
+    toast("收藏失败：" + e.message);
+  }
+}
+
+async function apiAddChat(question, answer, ragSources, imageBase64) {
+  try {
+    var fd = new FormData();
+    fd.append("question", question || "");
+    fd.append("answer", answer || "");
+    if (ragSources && ragSources.length) fd.append("rag_sources", JSON.stringify(ragSources));
+    if (imageBase64) fd.append("image", imageBase64);
+    var resp = await fetch("/favorites/chat", { method: "POST", body: fd });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    var data = await resp.json();
+    if (data.ok) toast("已收藏对话");
+    await refreshFavCount();
+    return data;
+  } catch (e) {
+    toast("收藏失败：" + e.message);
+  }
+}
+
+async function apiRemoveFav(fid) {
+  try {
+    var resp = await fetch("/favorites?fid=" + encodeURIComponent(fid), { method: "DELETE" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    await refreshFavCount();
+    if (!$("#favDrawer").hidden) renderFavList();
+  } catch (e) {
+    toast("删除失败：" + e.message);
+  }
+}
+
+async function apiClearFav(kind) {
+  try {
+    var resp = await fetch("/favorites/clear?type=" + (kind || ""), { method: "DELETE" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    await refreshFavCount();
+    if (!$("#favDrawer").hidden) renderFavList();
+  } catch (e) {
+    toast("清空失败：" + e.message);
+  }
+}
+
+async function refreshFavCount() {
+  try {
+    var resp = await fetch("/favorites");
+    if (!resp.ok) return;
+    favData = await resp.json();
+    var total = (favData.herbs || []).length + (favData.chats || []).length;
+    var badge = $("#favCount");
+    if (total > 0) { badge.hidden = false; badge.textContent = total; }
+    else { badge.hidden = true; }
+  } catch (e) { /* 忽略 */ }
+}
+
+function openFavDrawer() {
+  $("#favDrawer").hidden = false;
+  $("#favMask").hidden = false;
+  renderFavList();
+}
+function closeFavDrawer() {
+  $("#favDrawer").hidden = true;
+  $("#favMask").hidden = true;
+}
+
+function renderFavList() {
+  var list = $("#favList");
+  var empty = $("#favEmpty");
+  list.innerHTML = "";
+  var items = favTab === "herb" ? (favData.herbs || []) : (favData.chats || []);
+  if (!items.length) {
+    empty.hidden = false;
+    empty.textContent = favTab === "herb"
+      ? "暂无收藏药材，点击药材卡片上的 ★ 即可收藏。"
+      : "暂无收藏对话，点击对话回答下的 ★ 即可收藏。";
+    return;
+  }
+  empty.hidden = true;
+  items.forEach(function (it) {
+    var card = document.createElement("div");
+    card.className = "fav-card";
+    if (favTab === "herb") {
+      card.innerHTML =
+        '<div class="fav-card-main">' +
+          '<div class="fav-card-title">' + esc(cleanName(it.name)) + "</div>" +
+          (it.info && it.info.property ? '<div class="fav-card-sub">' + esc(it.info.property) + "</div>" : "") +
+        "</div>";
+      card.addEventListener("click", function (e) {
+        if (e.target.closest(".fav-del")) return;
+        // 点击药材跳转关系图谱聚焦
+        var gname = cleanName(it.name);
+        $("#graph-focus").value = gname;
+        $$(".tab").forEach(function (t) {
+          if (t.dataset.tab === "graph") t.click();
+        });
+        loadGraph(gname);
+        closeFavDrawer();
+      });
+    } else {
+      var qDec = safeDecode(it.question || "（图片提问）");
+      var ansSrc = safeDecode(it.answer || "").replace(/[#*`>_~]/g, " ").replace(/\s+/g, " ").trim();
+      if (ansSrc.length > 80) ansSrc = ansSrc.slice(0, 80) + "…";
+      card.innerHTML =
+        '<div class="fav-card-main">' +
+          '<div class="fav-card-title">问：' + esc(qDec) + "</div>" +
+          '<div class="fav-card-sub">' + esc(ansSrc) + "</div>" +
+          '<div class="fav-card-hint">点击查看完整对话详情</div>' +
+        "</div>";
+      card.classList.add("fav-card-click");
+      card.addEventListener("click", function (e) {
+        if (e.target.closest(".fav-del")) return;
+        openFavDetail(it);
+      });
+    }
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "fav-del";
+    del.textContent = "✕";
+    del.title = "移除收藏";
+    del.addEventListener("click", function (e) {
+      e.stopPropagation();
+      apiRemoveFav(it.fid, favTab);
+      card.remove();
+      var left = $$(".fav-card", list);
+      if (!left.length) { empty.hidden = false; }
+    });
+    card.appendChild(del);
+    list.appendChild(card);
+  });
+}
+
+/* 轻量提示 */
+var _toastTimer = null;
+function toast(msg) {
+  var t = $("#toast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "toast";
+    t.className = "toast";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function () { t.classList.remove("show"); }, 1800);
+}
+
+/* 收藏抽屉事件绑定 */
+(function initFavDrawer() {
+  $("#favToggle").addEventListener("click", openFavDrawer);
+  $("#favClose").addEventListener("click", closeFavDrawer);
+  $("#favMask").addEventListener("click", closeFavDrawer);
+  $$(".fav-tab").forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      $$(".fav-tab").forEach(function (t) { t.classList.remove("active"); });
+      tab.classList.add("active");
+      favTab = tab.dataset.favtab;
+      renderFavList();
+    });
+  });
+  $("#favClear").addEventListener("click", function () {
+    if (!confirm("确定清空当前分类（" + (favTab === "herb" ? "药材" : "对话") + "）的收藏？")) return;
+    apiClearFav(favTab);
+  });
+  // 全局委托：药材卡片上的收藏按钮
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-fav-herb]");
+    if (btn) {
+      e.preventDefault();
+      var name = cleanName(btn.getAttribute("data-fav-herb"));
+      var infoRaw = btn.getAttribute("data-fav-info");
+      var info = null;
+      if (infoRaw) { try { info = JSON.parse(decodeURIComponent(infoRaw)); } catch (_) {} }
+      apiAddHerb(name, info);
+    }
+    var cbtn = e.target.closest("[data-fav-chat]");
+    if (cbtn) {
+      e.preventDefault();
+      var q = cbtn.getAttribute("data-fav-chat");
+      var a = cbtn.getAttribute("data-fav-answer");
+      var s = cbtn.getAttribute("data-fav-sources");
+      try { q = decodeURIComponent(q); } catch (_) {}
+      try { a = decodeURIComponent(a); } catch (_) {}
+      var sources = [];
+      if (s) { try { sources = JSON.parse(decodeURIComponent(s)); } catch (_) {} }
+      apiAddChat(q, a, sources, lastChatImgBase64);
+    }
+  });
+})();
+
+/* 收藏对话详情弹窗 */
+function safeDecode(str) {
+  if (!str || typeof str !== "string") return str;
+  if (!/%[0-9A-Fa-f]{2}/.test(str)) return str;
+  try { return decodeURIComponent(str); } catch (_) { return str; }
+}
+function openFavDetail(item) {
+  var modal = $("#favDetail");
+  var body = $("#favDetailBody");
+  var html = "";
+  html += '<div class="fav-detail-q"><span class="fav-detail-label">问</span>' + esc(safeDecode(item.question || "（图片提问）")) + "</div>";
+  if (item.image) {
+    html += '<div class="fav-detail-img"><img src="' + esc(item.image) + '" alt="附图"></div>';
+  }
+  html += '<div class="fav-detail-a"><span class="fav-detail-label">答</span>' + mdToHtml(safeDecode(item.answer || "（无内容）")) + "</div>";
+  var sources = item.rag_sources || [];
+  if (sources.length) {
+    html += '<details class="rag-source" open><summary>知识库来源（' + sources.length + "）</summary><div class='rag-body'>";
+    sources.forEach(function (s) {
+      html += '<div class="rag-item">' + esc(s.title || s.name || "") + (s.meta ? " · " + esc(s.meta) : "") + "</div>";
+    });
+    html += "</div></details>";
+  }
+  body.innerHTML = html;
+  modal.hidden = false;
+  $("#favDetailMask").hidden = false;
+}
+function closeFavDetail() {
+  $("#favDetail").hidden = true;
+  $("#favDetailMask").hidden = true;
+}
+$("#favDetailMask").addEventListener("click", closeFavDetail);
+$$("[data-fav-detail-close]").forEach(function (b) { b.addEventListener("click", closeFavDetail); });
+
+// 进入页面即同步一次收藏数量
+refreshFavCount();
+
 function toxBadge(tox) {
   if (!tox) return "";
   if (tox === "大毒" || tox === "有毒") return '<span class="tcm-badge tcm-badge-tox">⚠ ' + esc(tox) + "</span>";
@@ -202,7 +466,7 @@ function renderPredict(data) {
   if (isImg && top1) {
     html += '<div class="tcm-section-title">识别结果（Top-1）</div>';
     html += '<div class="tcm-card" style="border-left:4px solid var(--vermilion)">';
-    html += "<h4>" + esc(top1.name) + "</h4>";
+    html += "<h4>" + esc(cleanName(top1.name)) + favStarHerb(cleanName(top1.name), top1) + "</h4>";
     html += toxBadge(top1.toxicity);
     if (data.low_confidence) {
       html += '<span class="tcm-badge tcm-badge-warn">置信度较低，建议人工复核</span>';
@@ -217,7 +481,7 @@ function renderPredict(data) {
     html += '<div class="tcm-grid">';
     rest.forEach(function (it) {
       html += '<div class="tcm-card">';
-      html += "<h4>" + esc(it.name) + "</h4>";
+      html += "<h4>" + esc(cleanName(it.name)) + favStarHerb(cleanName(it.name), it) + "</h4>";
       html += toxBadge(it.toxicity);
       html += '<div class="tcm-bar"><span style="width:' + (it.prob * 100).toFixed(1) + '%"></span></div>';
       html += '<div class="detail-muted">' + (it.prob * 100).toFixed(1) + "%</div>";
@@ -241,7 +505,7 @@ function renderPredict(data) {
         });
       }
       html += '<div class="tcm-card">';
-      html += "<h4>" + esc(it.name) + "</h4>";
+      html += "<h4>" + esc(cleanName(it.name)) + favStarHerb(cleanName(it.name), it) + "</h4>";
       html += toxBadge(it.toxicity);
       if (hitChips) html += '<div style="margin-top:4px">' + hitChips + "</div>";
       if (info.property) html += '<div class="detail-line"><span class="k">药性：</span>' + esc(info.property) + "</div>";
@@ -265,7 +529,7 @@ function renderPredict(data) {
     html += '<div class="tcm-grid">';
     data.similar.forEach(function (s) {
       html += '<div class="tcm-card">';
-      html += "<h4>" + esc(s.name) + "</h4>";
+      html += "<h4>" + esc(cleanName(s.name)) + favStarHerb(cleanName(s.name), s) + "</h4>";
       if (s.categories && s.categories.length) {
         html += s.categories.map(c => '<span class="tcm-badge tcm-badge-gray">' + esc(c) + "</span>").join("");
       }
@@ -277,7 +541,7 @@ function renderPredict(data) {
   // 易混淆药材
   if (data.confusable && data.confusable.peer) {
     html += '<div class="tcm-section-title">易混淆药材鉴别</div>';
-    html += '<div class="tcm-risk">⚠ 与 <strong>' + esc(data.confusable.peer) + "</strong> 外观相似，请注意鉴别。</div>";
+    html += '<div class="tcm-risk">⚠ 与 <strong>' + esc(cleanName(data.confusable.peer)) + "</strong> 外观相似，请注意鉴别。</div>";
     if (data.confusable.points && data.confusable.points.length) {
       html += '<div class="tcm-card"><ul class="md-list">';
       data.confusable.points.forEach(function (p) {
@@ -418,7 +682,7 @@ function searchGrid(items, kind) {
     }
     html += '<div class="tcm-card">';
     html += '<span class="tcm-stamp ' + kind + '">' + (kind === "full" ? "完全匹配" : "部分匹配") + "</span>";
-    html += "<h4>" + esc(it.name) + "</h4>";
+    html += "<h4>" + esc(cleanName(it.name)) + favStarHerb(cleanName(it.name), it) + "</h4>";
     html += toxBadge(info.toxicity || it.toxicity);
     if (hitChips) html += '<div style="margin-top:4px">' + hitChips + "</div>";
     if (info.property) html += '<div class="detail-line"><span class="k">药性：</span>' + esc(info.property) + "</div>";
@@ -505,6 +769,9 @@ function renderGradcam(stage, info) {
 var chatHistory = [];   // [{role, content}] 发给后端
 var chatAttachData = null; // {file, url}
 
+var lastChat = { q: "", a: "", s: [] };   // 最近一条助手回答，供收藏对话使用
+var lastChatImgBase64 = null;              // 最近一条对话的附图 base64，供收藏上传
+
 function chatAddMsg(role, contentHtml, extra) {
   var box = $("#chat-history");
   var wrap = document.createElement("div");
@@ -518,6 +785,19 @@ function chatAddMsg(role, contentHtml, extra) {
   var div = document.createElement("div");
   div.innerHTML = contentHtml;
   wrap.appendChild(div);
+  // 助手回答（非加载/错误态）附加收藏按钮
+  if (role === "assistant" && extra && extra.fav) {
+    var fav = document.createElement("button");
+    fav.type = "button";
+    fav.className = "fav-star fav-star-inline";
+    fav.textContent = "★";
+    fav.title = "收藏该对话";
+    var q = extra.fav.q, a = extra.fav.a, s = extra.fav.s || [];
+    fav.setAttribute("data-fav-chat", encodeURIComponent(q));
+    fav.setAttribute("data-fav-answer", encodeURIComponent(a));
+    fav.setAttribute("data-fav-sources", encodeURIComponent(JSON.stringify(s)));
+    wrap.appendChild(fav);
+  }
   var time = document.createElement("div");
   time.className = "msg-time";
   time.textContent = nowTime();
@@ -530,7 +810,10 @@ function chatAddMsg(role, contentHtml, extra) {
 function chatAttachFile(file) {
   if (!file || !file.type.startsWith("image/")) return;
   if (chatAttachData && chatAttachData.url) URL.revokeObjectURL(chatAttachData.url);
-  chatAttachData = { file: file, url: URL.createObjectURL(file) };
+  chatAttachData = { file: file, url: URL.createObjectURL(file), base64: null };
+  var reader = new FileReader();
+  reader.onload = function (e) { chatAttachData.base64 = e.target.result; };
+  reader.readAsDataURL(file);
   var box = $("#chat-attach");
   box.hidden = false;
   $("img", box).src = chatAttachData.url;
@@ -545,6 +828,49 @@ $("[data-attach-clear]").addEventListener("click", function () {
   $("#chat-attach").hidden = true;
   $("#chat-file").value = "";
 });
+
+/* ---------- 拖拽 & 粘贴上传（AI 对话） ---------- */
+(function initChatDropPaste() {
+  var box = $("[data-chat-drop]");
+  if (!box) return;
+
+  // 拖拽：在 chatbox 范围内高亮并接收图片
+  ["dragenter", "dragover"].forEach(function (ev) {
+    box.addEventListener(ev, function (e) {
+      if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
+      e.preventDefault();
+      box.classList.add("drag-over");
+    });
+  });
+  ["dragleave", "dragend"].forEach(function (ev) {
+    box.addEventListener(ev, function (e) {
+      // 仅当真正离开容器时取消高亮
+      if (ev === "dragleave" && box.contains(e.relatedTarget)) return;
+      box.classList.remove("drag-over");
+    });
+  });
+  box.addEventListener("drop", function (e) {
+    e.preventDefault();
+    box.classList.remove("drag-over");
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) chatAttachFile(f);
+  });
+
+  // 粘贴：在对话输入框粘贴图片即可附图
+  document.addEventListener("paste", function (e) {
+    var active = document.activeElement;
+    // 仅当焦点在对话区域（输入框或聊天框）时拦截，避免误吞其它粘贴
+    if (active && active !== $("#chat-input") && active !== box && !box.contains(active)) return;
+    var item = e.clipboardData && e.clipboardData.items && Array.from(e.clipboardData.items)
+      .find(function (it) { return it.kind === "file" && it.type.startsWith("image/"); });
+    if (!item) return;
+    var f = item.getAsFile();
+    if (f) {
+      e.preventDefault();
+      chatAttachFile(f);
+    }
+  });
+})();
 
 $("[data-send]").addEventListener("click", sendChat);
 $("#chat-input").addEventListener("keydown", function (e) {
@@ -584,7 +910,17 @@ async function sendChat() {
       });
       html += "</div></details>";
     }
-    chatAddMsg("assistant", html);
+    lastChat = { q: question, a: data.answer || data.message || "", s: data.rag_sources || [] };
+    if (chatAttachData && chatAttachData.file && !chatAttachData.base64) {
+      lastChatImgBase64 = await new Promise(function (resolve) {
+        var r = new FileReader();
+        r.onload = function (e) { resolve(e.target.result); };
+        r.readAsDataURL(chatAttachData.file);
+      });
+    } else {
+      lastChatImgBase64 = chatAttachData ? chatAttachData.base64 : null;
+    }
+    chatAddMsg("assistant", html, { fav: lastChat });
     chatHistory.push({ role: "assistant", content: data.answer || "" });
   } catch (err) {
     tmp.remove();
@@ -820,7 +1156,7 @@ function graphShowDetail(n) {
   var info = $("#graph-info");
   var parts = [];
   if (n.type === "herb") {
-    parts.push("<h3>" + esc(n.id) + "</h3>");
+    parts.push("<h3>" + esc(cleanName(n.id)) + "</h3>");
     parts.push("<div>药性：" + esc(n.property || "—") + "</div>");
     parts.push("<div>归经：" + esc(n.meridian || "—") + "</div>");
     parts.push("<div>功效：" + esc(n["function"] || "—") + "</div>");
@@ -1038,3 +1374,19 @@ async function loadHerbNames() {
 }
 
 loadHerbNames();
+
+/* ---------- 从首页跳转激活指定页签（?tab=xxx 或 #tab=xxx） ---------- */
+(function activateTabFromUrl() {
+  var tabKey = new URLSearchParams(window.location.search).get("tab");
+  if (!tabKey) {
+    var m = (window.location.hash || "").match(/[#&]tab=([\w-]+)/);
+    if (m) tabKey = m[1];
+  }
+  if (!tabKey) return;
+  var tab = $$(".tab").find(function (t) { return t.dataset.tab === tabKey; });
+  if (!tab) return;
+  // 模拟点击以复用既有切换逻辑（含图谱首次加载）
+  tab.click();
+  // 定位到工作台顶部，确保用户看到对应界面
+  window.scrollTo({ top: 0, behavior: "smooth" });
+})();

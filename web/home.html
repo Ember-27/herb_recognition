@@ -111,19 +111,29 @@
 
   .scroll-hint {
     position:absolute; bottom:30px; left:50%; transform:translateX(-50%);
-    color:var(--muted); font-size:12px; letter-spacing:3px; text-align:center; z-index:2;
-    opacity:0; animation:rise 1s 1s forwards;
+    z-index:2; opacity:0; animation:rise 1s 1s forwards;
   }
-  .scroll-hint i { display:block; width:1px; height:34px; margin:10px auto 0; background:linear-gradient(var(--gold),transparent); animation:drop 1.8s infinite; }
+  .scroll-hint .arrow {
+    display:block; width:22px; height:22px; margin:0 auto;
+    border-right:2px solid var(--gold); border-bottom:2px solid var(--gold);
+    transform:rotate(45deg); animation:bounce 1.8s infinite;
+  }
+  .scroll-hint .arrow::after {
+    content:""; position:absolute; left:50%; top:0; width:2px; height:18px;
+    background:linear-gradient(var(--gold),transparent); transform:translateX(-50%);
+    animation:drop 1.8s infinite;
+  }
 
   /* ---------- Marquee of herbs ---------- */
   .herb-rail { padding:64px 0 30px; border-top:1px solid var(--line); }
   .rail-head { display:flex; align-items:baseline; gap:16px; margin-bottom:26px; }
   .rail-head h3 { font-family:var(--serif); font-size:24px; letter-spacing:2px; color:var(--gold-soft); }
   .rail-head span { color:var(--muted); font-size:13px; letter-spacing:2px; }
-  .rail { display:flex; gap:18px; overflow-x:auto; padding:6px 2px 22px; scrollbar-width:thin; scroll-snap-type:x mandatory; }
+  .rail { display:flex; gap:18px; overflow-x:auto; padding:6px 2px 22px; scrollbar-width:thin; scroll-snap-type:x mandatory; scrollbar-color:var(--gold) var(--ink); }
   .rail::-webkit-scrollbar { height:6px; }
-  .rail::-webkit-scrollbar-thumb { background:var(--line); border-radius:3px; }
+  .rail::-webkit-scrollbar-track { background:var(--ink); border-radius:3px; }
+  .rail::-webkit-scrollbar-thumb { background:var(--gold); border-radius:3px; }
+  .rail::-webkit-scrollbar-thumb:hover { background:var(--gold-soft); }
   .chip {
     flex:0 0 auto; scroll-snap-align:start; width:160px; height:200px; border-radius:16px;
     position:relative; overflow:hidden; border:1px solid var(--line);
@@ -154,6 +164,15 @@
   .card p { color:var(--muted); font-size:14.5px; }
   .card .tags { margin-top:16px; display:flex; flex-wrap:wrap; gap:8px; }
   .card .tags span { font-size:11px; color:var(--gold-soft); border:1px solid var(--line); padding:4px 10px; border-radius:20px; }
+  .card .goto {
+    display:inline-flex; align-items:center; gap:6px; margin-top:22px;
+    color:var(--gold-soft); text-decoration:none; font-size:14px; letter-spacing:1px;
+    border:1px solid var(--line); padding:9px 18px; border-radius:30px;
+    transition:all .3s; align-self:flex-start;
+  }
+  .card .goto:hover { background:var(--gold); color:var(--ink); border-color:var(--gold); }
+  .card .goto::after { content:"→"; transition:transform .3s; }
+  .card .goto:hover::after { transform:translateX(4px); }
   .card .glow { position:absolute; right:-40px; top:-40px; width:140px; height:140px; border-radius:50%; background:radial-gradient(var(--gold),transparent 70%); opacity:.07; }
   .c-wide { grid-column:span 7; }
   .c-mid { grid-column:span 5; }
@@ -242,7 +261,7 @@
       <a class="cta-ghost" href="#modules">了解五大功能 ↓</a>
     </div>
   </div>
-  <div class="scroll-hint">向下滚动<i></i></div>
+  <div class="scroll-hint"><i class="arrow"></i></div>
 </section>
 
 <!-- HERB RAIL -->
@@ -270,30 +289,35 @@
         <h4>图像识别</h4>
         <p>上传原植物、饮片或干药材图片，基于 Swin-Tiny 视觉编码与跨模态融合，输出 Top-5 药材名称与置信度，并对易混药材作专门区分。</p>
         <div class="tags"><span>视觉分类</span><span>Top-5</span><span>易混鉴别</span></div>
+        <a class="goto" href="index.html#tab=recognize">进入此模块</a>
       </div>
       <div class="card c-mid">
         <div class="no">02</div>
         <h4>中医药知识图谱</h4>
         <p>药材—功效—病症—方剂—配伍禁忌的关系网络，力导向可视化，聚焦单药即可查看其配伍与禁忌（红虚线十八反、橙虚线十九畏）。</p>
         <div class="tags"><span>NetworkX</span><span>力导向图</span><span>配伍推理</span></div>
+        <a class="goto" href="index.html#tab=graph">进入此模块</a>
       </div>
       <div class="card c-third">
         <div class="no">03</div>
         <h4>特性检索</h4>
         <p>以性味、归经、功效为条件检索药材卡片网格，并附带方剂推荐，支持完全匹配与部分匹配。</p>
         <div class="tags"><span>语义检索</span><span>方剂推荐</span></div>
+        <a class="goto" href="index.html#tab=search">进入此模块</a>
       </div>
       <div class="card c-third">
         <div class="no">04</div>
         <h4>RAG 增强对话</h4>
         <p>图文混合多轮问答，本地识别 + 知识图谱检索 + 大模型生成，回答附「知识库来源」标注，无 Key 自动降级本地检索。</p>
         <div class="tags"><span>RAG</span><span>来源标注</span><span>降级兜底</span></div>
+        <a class="goto" href="index.html#tab=chat">进入此模块</a>
       </div>
       <div class="card c-third">
         <div class="no">05</div>
         <h4>可解释与端侧导出</h4>
         <p>Grad-CAM 热力图展示识别依据；导出纯视觉 TorchScript 模型供端侧快速识图，兼顾可解释性与部署灵活性。</p>
         <div class="tags"><span>Grad-CAM</span><span>TorchScript</span><span>端侧</span></div>
+        <a class="goto" href="index.html#tab=gradcam">进入此模块</a>
       </div>
     </div>
 
@@ -355,13 +379,13 @@
 <script>
   // herb rail data (uses local web herb thumbnails)
   const herbs = [
-    {n:"枸杞子", e:"滋补肝肾", img:"hero.jpg"},
-    {n:"黄芪", e:"补气固表", img:"hero.jpg"},
-    {n:"金银花", e:"清热解毒", img:"hero.jpg"},
-    {n:"陈皮", e:"理气健脾", img:"hero.jpg"},
-    {n:"当归", e:"补血活血", img:"hero.jpg"},
-    {n:"甘草", e:"调和诸药", img:"hero.jpg"},
-    {n:"石斛", e:"益胃生津", img:"hero.jpg"}
+    {n:"枸杞子", e:"滋补肝肾", img:"gouqizi.jpg"},
+    {n:"黄芩", e:"清热燥湿", img:"huangqin.jpg"},
+    {n:"金银花", e:"清热解毒", img:"jinyihua.jpg"},
+    {n:"陈皮", e:"理气健脾", img:"chenpi.jpg"},
+    {n:"红花", e:"活血通经", img:"honghua.jpg"},
+    {n:"甘草", e:"调和诸药", img:"gancao.jpg"},
+    {n:"石斛", e:"益胃生津", img:"shihu.jpg"}
   ];
   const rail = document.getElementById('rail');
   herbs.forEach(h => {

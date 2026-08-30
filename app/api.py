@@ -270,7 +270,7 @@ async def chat(image: UploadFile = None, question: str = Form(""),
     llm = get_llm()
     if not llm.available:
         return {
-            "answer": f"{context}\n\n（注：未配置 ZHIPU_API_KEY，以上为本地知识图谱结果；"
+            "answer": f"{context}\n\n（注：未配置 DEEPSEEK_API_KEY，以上为本地知识图谱结果；"
                       f"配置后可获得更自然的对话解释。）\n\n{_DISCLAIMER}",
             "llm": "disabled",
             "llm_model": llm.model,
@@ -294,6 +294,69 @@ async def chat(image: UploadFile = None, question: str = Form(""),
             "rag_sources": rag_sources[:4],
             **pred,
         }
+
+
+# ---------------------------------------------------------------------------
+# 收藏夹接口（后端 JSON 持久化）
+# ---------------------------------------------------------------------------
+from app.favorites_store import (  # noqa: E402
+    load_favorites, add_herb, add_chat, remove_favorite, clear_favorites,
+)
+
+
+@app.get("/favorites")
+def get_favorites(type: str = ""):
+    """获取收藏列表；type=herb|chat 可过滤，默认返回全部。"""
+    data = load_favorites()
+    if type == "herb":
+        return {"herbs": data["herbs"], "chats": []}
+    if type == "chat":
+        return {"herbs": [], "chats": data["chats"]}
+    return data
+
+
+@app.post("/favorites/herb")
+async def post_favorite_herb(name: str = Form(""), info: str = Form("")):
+    """收藏药材：name 必填，info 可选 JSON 字符串。"""
+    parsed = {}
+    if info and info.strip():
+        try:
+            parsed = json.loads(info)
+        except (json.JSONDecodeError, ValueError):
+            parsed = {}
+    return add_herb(name, parsed)
+
+
+@app.post("/favorites/chat")
+async def post_favorite_chat(question: str = Form(""),
+                             answer: str = Form(""),
+                             rag_sources: str = Form(""),
+                             image: str = Form("")):
+    """收藏对话：question + answer。rag_sources 可选 JSON 字符串；image 可选 base64 data URL。"""
+    sources = []
+    if rag_sources and rag_sources.strip():
+        try:
+            sources = json.loads(rag_sources)
+        except (json.JSONDecodeError, ValueError):
+            sources = []
+    img_b64 = image.strip() or None
+    if img_b64 and not img_b64.startswith("data:image/"):
+        img_b64 = None
+    return add_chat(question, answer, sources, img_b64)
+
+
+@app.delete("/favorites")
+async def delete_favorite(fid: str = ""):
+    """删除某条收藏（按 fid）。"""
+    if not fid:
+        return {"ok": False, "error": "empty_fid"}
+    return remove_favorite(fid)
+
+
+@app.delete("/favorites/clear")
+async def clear_favorites_route(type: str = ""):
+    """清空收藏；type=herb|chat 可选。"""
+    return clear_favorites(type or None)
 
 
 # 首页落地页（优先于 StaticFiles 兜底）：/ 指向 home.html，/app 指向原功能页 index.html
