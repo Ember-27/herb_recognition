@@ -472,7 +472,12 @@ async function runRecognizeMulti(crops) {
     var files = [];
     for (var i = 0; i < crops.length; i++) {
       var blob = await window.cropZoneToFile(crops[i]);
-      if (!blob) { alert("选区 " + (i + 1) + " 裁剪失败，请重试"); return; }
+      if (!blob) {
+        loading.hidden = true;
+        if (btn) btn.disabled = false;
+        alert("选区 " + (i + 1) + " 裁剪失败，请重试");
+        return;
+      }
       files.push(new File([blob], "zone" + i + ".png", { type: "image/png" }));
     }
     var fd = new FormData();

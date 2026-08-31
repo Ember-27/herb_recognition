@@ -921,6 +921,7 @@ body {
   font-size: 14px;
   padding: 14px 0;
 }
+.result-loading[hidden] { display: none !important; }
 
 .spinner {
   width: 18px; height: 18px;
