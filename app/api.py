@@ -26,7 +26,7 @@ if ROOT not in sys.path:
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile, Body
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -157,8 +157,13 @@ def health():
 
 
 @app.post("/predict")
-async def predict(image: UploadFile = None, text: str = Form("")):
-    """图片+文本识别。image 留空则退化为纯文本特性检索。"""
+async def predict(image: UploadFile = None, text: str = Form(""),
+                 crop: str = Form("")):
+    """图片+文本识别。image 留空则退化为纯文本特性检索。
+
+    crop 可选标记：非空前端表示本次 image 为「框选区域裁剪图」
+    （原为 /predict 兼容字段，仅用于回显识别模式，识别逻辑统一走 image）。
+    """
     demo = get_demo()
     img = None
     if image is not None:
@@ -166,7 +171,115 @@ async def predict(image: UploadFile = None, text: str = Form("")):
         if not data:
             return {"error": "empty_image", "message": "上传的图片为空。"}
         img = np.array(Image.open(io.BytesIO(data)).convert("RGB"))
-    return demo.predict_json(img, text)
+    result = demo.predict_json(img, text)
+    if crop:
+        result = {**result, "cropped": True}
+    return result
+
+
+@app.post("/herb_sample_image")
+async def herb_sample_image(payload: dict = Body(None)):
+    """根据药材名（拼音目录名）从训练/验证集随机选一张图片，返回 base64。
+
+    请求体：{"names": ["gouqizi", "rentian"]}
+    返回：{"images": {"gouqizi": "data:image/jpeg;base64,....", ...}}（找不到的为 null）
+    """
+    import base64
+    names = (payload or {}).get("names") or []
+    demo = get_demo()
+    result: dict = {}
+    for name in names:
+        path = demo.random_sample_image(name)
+        if not path or not os.path.exists(path):
+            result[name] = None
+            continue
+        try:
+            with open(path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("ascii")
+            ext = os.path.splitext(path)[1].lower().lstrip(".")
+            mime = "jpeg" if ext in ("jpg", "jpeg") else ext
+            result[name] = f"data:image/{mime};base64,{b64}"
+        except Exception:
+            result[name] = None
+    return {"images": result}
+
+
+@app.post("/predict_multi")
+async def predict_multi(images: list[UploadFile] = File(None),
+                        text: str = Form("")):
+    """批量识别多个框选区域：一次请求收 N 张裁剪图，返回结果数组。
+
+    用于「一张图里多种药材」场景：前端在整图上画出多个选区，逐个裁剪后
+    打包上传，后端对每张图独立走现有分类器，再汇总成一个 zones 列表。
+
+    请求（multipart/form-data）:
+      images  多个裁剪后的选区图片（2 张以上）
+      text    可选文本（如统一备注，不作为分类条件）
+
+    返回:
+      zones    列表，每项形如 {"zone_idx", "top5", "kg_info", "similar",
+                               "contraindications", "classic_formulas",
+                               "formula", "confusable", "mode", "cropped"}
+      compat   跨区配伍分析：复用知识图谱十八反/十九畏/相须相使
+      disclaimer 医疗风险提示
+    """
+    demo = get_demo()
+    if not images:
+        return {"error": "empty_images", "message": "请至少上传一个选区图片。"}
+    zones = []
+    for idx, img_file in enumerate(images):
+        data = await img_file.read()
+        if not data:
+            zones.append({"zone_idx": idx, "error": "empty_image",
+                          "message": "选区图片为空。"})
+            continue
+        try:
+            arr = np.array(Image.open(io.BytesIO(data)).convert("RGB"))
+        except Exception as e:
+            zones.append({"zone_idx": idx, "error": "decode_failed",
+                          "message": "图片解码失败：" + str(e)})
+            continue
+        res = demo.predict_json(arr, "")
+        zones.append({**res, "zone_idx": idx, "cropped": True})
+
+    # 跨区配伍分析：取每个选区的 Top-1 药材名
+    herb_names = [_strip_top1(z) for z in zones]
+    compat = _build_compat_analysis(demo, herb_names)
+    return {"zones": zones, "compat": compat, "disclaimer": _DISCLAIMER}
+
+
+def _strip_top1(zone: dict) -> str:
+    """从单个 zone 结果中取 Top-1 药材名（用于配伍分析）。"""
+    top5 = zone.get("top5") or []
+    return top5[0]["name"] if top5 else ""
+
+
+def _build_compat_analysis(demo: HerbDemo, herb_names: list) -> dict:
+    """基于知识图谱对多个药材做两两配伍分析（十八反/十九畏/相须相使）。
+
+    返回 {"pairs": [...], "incompatible": [...], "restraint": [...], "paired": [...]}
+    """
+    out = {"pairs": [], "incompatible": [], "restraint": [], "paired": []}
+    names = [n for n in herb_names if n]
+    kg = getattr(demo, "kg", None)
+    graph = getattr(kg, "graph", None) if kg else None
+    if graph is None:
+        return out
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a, b = names[i], names[j]
+            if graph.has_edge(a, b):
+                rel = graph[a][b].get("relation")
+                if rel == "incompatible":
+                    out["incompatible"].append([a, b])
+                    out["pairs"].append({"a": a, "b": b, "relation": "incompatible"})
+                elif rel == "restraint":
+                    out["restraint"].append([a, b])
+                    out["pairs"].append({"a": a, "b": b, "relation": "restraint"})
+                elif rel == "paired":
+                    out["paired"].append([a, b])
+                    out["pairs"].append({"a": a, "b": b, "relation": "paired"})
+    return out
 
 
 @app.post("/search")

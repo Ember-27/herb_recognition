@@ -186,6 +186,20 @@ button.secondary {
 .tcm-grid-card .nm { font-family: var(--font-serif); font-weight: 700; font-size: 16px; letter-spacing: 1px; }
 .tcm-grid-card .sc { color: #6E675E; font-size: 12px; margin-top: 4px; }
 
+/* 药材样本图（base64 内联） */
+.tcm-top1-img {
+    width: 168px; height: 168px; object-fit: cover; border-radius: 12px;
+    border: 1px solid #E5DFD0; box-shadow: 0 2px 6px rgba(38,36,31,.08); flex: 0 0 auto;
+}
+.tcm-thumb {
+    width: 100%; height: 120px; object-fit: cover; border-radius: 8px;
+    border: 1px solid #E5DFD0; margin-bottom: 8px; background: #F5F1E6;
+}
+.tcm-thumb-empty {
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    color: #9A9384; font-size: 12px; padding: 8px;
+}
+
 /* 置信度 / 匹配度进度条 */
 .tcm-bar { height: 8px; background: #EFEBE0; border-radius: 99px; overflow: hidden; margin: 6px 0; }
 .tcm-bar > i { display: block; height: 100%; border-radius: 99px;

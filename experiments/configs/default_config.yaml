@@ -21,7 +21,7 @@ data:
 #       预训练主干微调后纯视觉 acc 可到 90%+（已在 16 类子集验证）。
 vision:
   name: swin_tiny            # 可选: swin_tiny / resnet50 / efficientnet_b0 / convnext_tiny
-  pretrained: true           # true: 下载 ImageNet 预训练权重并微调（关键修复项）
+  pretrained: false          # false: 跳过联网下载 ImageNet 权重（推理时 best_model.pth 会整体覆盖，离线可跑）
   freeze_backbone_epochs: 1  # 仅热身 1 个 epoch 后解冻主干，配合更长训练充分微调
 
 # ---------- 文本编码器 ----------

@@ -288,6 +288,133 @@ body {
   object-fit: contain;
 }
 
+/* 图片预览舞台：相对定位，框选遮罩层与图片对齐 */
+.preview-stage {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
+.preview-stage img {
+  display: block;
+  cursor: default;
+}
+.preview-stage.cropping img {
+  cursor: crosshair;
+}
+
+/* 框选遮罩层（覆盖整张图片） */
+.crop-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  z-index: 5;
+  touch-action: none;
+}
+.crop-overlay[hidden] { display: none !important; }
+
+/* 选区矩形 */
+.crop-rect {
+  position: absolute;
+  border: 1.5px dashed var(--vermilion);
+  background: rgba(176, 58, 46, 0.12);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+}
+
+/* 已确认选区的持久框选痕迹（原图上保留，可退出框选态后查看） */
+.crop-mark {
+  position: absolute;
+  border: 2px solid var(--vermilion);
+  background: rgba(176, 58, 46, 0.10);
+  pointer-events: none;
+  z-index: 4;
+  box-sizing: border-box;
+}
+.crop-mark-no {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  transform: translateY(-100%);
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  background: var(--vermilion);
+  border-radius: 4px 4px 4px 0;
+}
+
+/* 选区外四向暗化遮罩 */
+.crop-shade {
+  position: absolute;
+  background: rgba(20, 16, 14, 0.42);
+  pointer-events: none;
+}
+.crop-shade-t { top: 0; left: 0; right: 0; }
+.crop-shade-b { bottom: 0; left: 0; right: 0; }
+.crop-shade-l { top: 0; bottom: 0; left: 0; }
+.crop-shade-r { top: 0; bottom: 0; right: 0; }
+
+/* 框选操作按钮行 */
+.crop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.crop-actions[hidden] { display: none !important; }
+
+/* 已确认选区列表（可逐个删除） */
+.crop-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  min-height: 0;
+}
+.crop-list:empty { display: none; }
+.crop-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(176, 58, 46, 0.08);
+  border: 1px solid rgba(176, 58, 46, 0.35);
+  color: var(--ink);
+}
+.crop-chip-x {
+  border: none;
+  background: rgba(176, 58, 46, 0.16);
+  color: var(--vermilion-deep);
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+}
+.crop-chip-x:hover { background: var(--vermilion); color: #fff; }
+
+/* 多药联动操作行 */
+.multi-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 /* ---------- 卡片（通用） ---------- */
 .tcm-grid {
   display: grid;
@@ -306,6 +433,37 @@ body {
 }
 
 .tcm-card:hover { border-color: var(--line-strong); box-shadow: 0 3px 10px rgba(38, 36, 31, 0.07); }
+
+/* ---------- 药材样本缩略图（训练/验证集随机抽取并保留） ---------- */
+.tcm-thumb {
+  display: block;
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg-muted);
+  margin-bottom: 10px;
+}
+.tcm-grid .tcm-thumb { height: 110px; }
+
+/* Top-1 卡片：左图右文横向排版，图片大小与其他结果一致 */
+.tcm-card-top1 {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.tcm-card-top1 .tcm-thumb {
+  flex: 0 0 110px;
+  width: 110px;
+  height: 110px;
+  margin-bottom: 0;
+}
+.tcm-card-top1 .tcm-card-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tcm-card-top1 .tcm-bar { margin-top: 8px; }
 
 .tcm-card h4 {
   font-family: var(--serif);
@@ -353,6 +511,16 @@ body {
   padding: 8px 12px;
   font-size: 13px;
   color: var(--vermilion-deep);
+  margin: 10px 0;
+}
+
+.tcm-ok {
+  border-left: 4px solid var(--herb-green);
+  background: rgba(94, 140, 90, 0.1);
+  border-radius: 0 6px 6px 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--herb-green);
   margin: 10px 0;
 }
 

@@ -46,9 +46,29 @@
         <div class="uploader-tip">示例：枸杞 / 黄芪 / 金银花 / 陈皮 等中草药照片</div>
       </div>
       <div class="uploader-preview" hidden>
-        <img alt="">
+        <div class="preview-stage">
+          <img id="recognize-preview-img" alt="">
+          <!-- 框选遮罩层：拖拽画矩形选择识别区域 -->
+          <div class="crop-overlay" id="crop-overlay" hidden>
+            <div class="crop-rect" id="crop-rect"></div>
+            <div class="crop-shade crop-shade-t"></div>
+            <div class="crop-shade crop-shade-b"></div>
+            <div class="crop-shade crop-shade-l"></div>
+            <div class="crop-shade crop-shade-r"></div>
+          </div>
+        </div>
         <button type="button" class="btn-ghost btn-sm" data-clear>重新上传</button>
       </div>
+      <!-- 框选操作按钮行（仅在已上传图片后出现） -->
+      <div class="crop-actions" id="crop-actions" hidden>
+        <button type="button" class="btn-ghost btn-sm" id="btn-crop" data-crop>框选区域</button>
+        <button type="button" class="btn-ghost btn-sm" id="btn-crop-confirm" data-crop-confirm hidden>添加选区</button>
+        <button type="button" class="btn-ghost btn-sm" id="btn-crop-cancel" data-crop-cancel hidden>取消框选</button>
+        <button type="button" class="btn-ghost btn-sm" id="btn-crop-clear" hidden>清除选框</button>
+        <button type="button" class="btn-ghost btn-sm" id="btn-crop-reset" data-clear hidden>清除图片</button>
+      </div>
+      <!-- 已确认选区列表（可逐个删除） -->
+      <div class="crop-list" id="crop-list"></div>
     </div>
 
     <div class="field-row">

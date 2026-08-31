@@ -1,5 +1,5 @@
 """Gradio 演示界面：上传图片 + 输入文本，返回识别结果与药性说明。"""
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import os
 import numpy as np
 import torch
@@ -17,6 +17,45 @@ from app.graph_view import build_graph_html
 from app.rag_retriever import RAGRetriever
 from app import ui_cards
 from app.ui_theme import build_theme, GLOBAL_CSS, HEADER_HTML, DISCLAIMER_HTML
+
+
+# ===== gradio_client 1.3.0 兼容补丁（Python<3.10 环境无法升级到 1.4+） =====
+# gradio 4.44.1 的 /info API 文档路由在解析组件 schema 时，gradio_client 1.3.0
+# 会对 bool 值执行 `in` 判断而抛 TypeError（argument of type 'bool' is not iterable）。
+# 该路由由 gradio 内部无条件注册、无法用参数关闭，故在此对 schema 解析做防御性兜底，
+# 保证即使 /info 被访问也不会返回 500，不影响主界面与所有交互功能。
+def _patch_gradio_client_bool_bug() -> None:
+    try:
+        import gradio_client.utils as _gc_utils
+
+        _orig_json_schema_to_python_type = _gc_utils.json_schema_to_python_type
+
+        def _safe_json_schema_to_python_type(schema):
+            try:
+                if not isinstance(schema, dict):
+                    return "Any"
+                return _orig_json_schema_to_python_type(schema)
+            except Exception:
+                return "Any"
+
+        _gc_utils.json_schema_to_python_type = _safe_json_schema_to_python_type
+
+        _orig_value_is_file = _gc_utils.value_is_file
+
+        def _safe_value_is_file(api_info):
+            try:
+                if not isinstance(api_info, dict):
+                    return False
+                return _orig_value_is_file(api_info)
+            except Exception:
+                return False
+
+        _gc_utils.value_is_file = _safe_value_is_file
+    except Exception:
+        pass
+
+
+_patch_gradio_client_bool_bug()
 
 
 # 常见口语/饮片别名 -> 规范名（用于 AI 对话中自然语言药材名识别）
@@ -134,6 +173,60 @@ class HerbDemo:
         self.kg = build_knowledge_graph(config)
         _, self.idx2label = build_label_maps(config["data"]["train_csv"])
         self.retriever = None  # RAG 检索器（首次对话时懒加载）
+        # 药材样本图缓存：name -> 一张随机选取并保留的图片（展示用）
+        self._sample_cache: Dict[str, str] = {}
+        # 中文名 -> 拼音目录名 映射（样本图目录按拼音名组织，而 CSV 的 label 是中文名）
+        self._zh2py: Dict[str, str] = {}
+        train_csv = config.get("data", {}).get("train_csv")
+        if train_csv and os.path.exists(train_csv):
+            try:
+                import csv as _csv
+                with open(train_csv, "r", encoding="utf-8", newline="") as _f:
+                    _reader = _csv.DictReader(_f)
+                    for _row in _reader:
+                        _zh = (_row.get("label") or "").strip()
+                        _zh_stripped = _strip_pinyin(_zh)
+                        _path = _row.get("image_path") or ""
+                        if not _zh_stripped or _zh_stripped in self._zh2py:
+                            continue
+                        # image_path 形如 .../cls_chinese_medicine/train/aiye/aiye_0001.jpg -> 拼音目录名
+                        _parts = [p for p in _path.replace("\\", "/").split("/") if p]
+                        if len(_parts) >= 2:
+                            self._zh2py[_zh_stripped] = _parts[-2]
+                        if len(self._zh2py) >= (config.get("data", {}).get("num_classes") or 100000):
+                            break
+            except Exception as _e:
+                print(f"[WARN] 构建中文名->拼音目录映射失败: {_e}")
+        self._sample_dirs = []
+        # 优先使用预生成的药材图鉴目录（images/图鉴），稳定且无需实时扫描大数据集
+        atlas_root = config.get("data", {}).get("herb_atlas_dir")
+        if not atlas_root:
+            atlas_root = os.path.normpath(os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "images", "图鉴"))
+        if os.path.isdir(atlas_root):
+            self._sample_dirs = [atlas_root]
+        else:
+            print(f"[WARN] 未找到图鉴目录 {atlas_root}，请运行 tools/build_herb_atlas.py 生成。")
+
+        # 兜底图源：相似药推荐中「不在训练集」的药材图片（images/addition/），
+        # 由 tools/fetch_addition_herbs.py 生成，herb_map.json 提供 中文名->拼音文件名 映射。
+        # 查找顺序：图鉴目录优先，addition 兜底；addition 内部用 herb_map 解析中文名。
+        proj_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self._addition_dir = os.path.normpath(os.path.join(proj_root, "images", "addition"))
+        self._herb_map: Dict[str, str] = {}  # 中文名 -> 拼音文件名(不含扩展名)
+        map_file = os.path.join(self._addition_dir, "herb_map.json")
+        if os.path.isfile(map_file):
+            try:
+                import json as _json
+                with open(map_file, "r", encoding="utf-8") as _f:
+                    _raw = _json.load(_f)
+                for _zh, _fn in _raw.items():
+                    self._herb_map[_zh] = os.path.splitext(_fn)[0]
+            except Exception as _e:
+                print(f"[WARN] 读取 addition/herb_map.json 失败: {_e}")
+        elif os.path.isdir(self._addition_dir):
+            print(f"[WARN] 未找到 {map_file}，addition 目录将退回按拼音名直接匹配。")
 
     def predict(self, image, text: str):
         # 纯文本识别：无图片时按特性检索匹配最可能的药材（完全匹配优先，Top-5）
@@ -217,6 +310,66 @@ class HerbDemo:
         kg_desc = kg_desc + f"\n\n【方剂推荐（以 {top_name} 为君药）】\n{fr}"
         return result, kg_desc
 
+    def random_sample_image(self, name: str) -> Optional[str]:
+        """为某药材取一张样本图，查找顺序：图鉴目录(images/图鉴) -> addition 兜底(images/addition)。
+
+        图鉴/拼音目录名如 gouqizi.jpg；addition 内部用 herb_map.json 的 中文名->拼音文件名 映射。
+        name 可为中文名或拼音名，解析后查找对应文件；找不到返回 None。结果按拼音名缓存。
+        """
+        raw = (name or "").strip()
+        if not raw:
+            return None
+        # 解析为拼音目录名：先用中文名->拼音映射，再尝试原样（已是拼音目录名）
+        py = self._zh2py.get(raw) or self._zh2py.get(_strip_pinyin(raw)) or raw
+        if py in self._sample_cache:
+            return self._sample_cache[py]
+        found = None
+        # 1) 优先在图鉴目录(训练集类)查找
+        for base in self._sample_dirs:
+            for ext in (".jpg", ".jpeg", ".png", ".bmp", ".webp"):
+                cand = os.path.join(base, py + ext)
+                if os.path.isfile(cand):
+                    found = cand
+                    break
+            if found:
+                break
+        # 2) 兜底：addition 目录（相似药推荐中不在训练集的药材）
+        if not found and os.path.isdir(self._addition_dir):
+            add_py = self._herb_map.get(raw) or self._herb_map.get(_strip_pinyin(raw)) or py
+            for ext in (".jpg", ".jpeg", ".png", ".bmp", ".webp"):
+                cand = os.path.join(self._addition_dir, add_py + ext)
+                if os.path.isfile(cand):
+                    found = cand
+                    break
+        self._sample_cache[py] = found  # 缓存（含 None，避免重复扫描）
+        return found
+
+    def _sample_image_datauri(self, name: str) -> Optional[str]:
+        """取药材样本图并转为 base64 data URI（供 Gradio gr.HTML 内联展示）。
+
+        Gradio 4.x 的 gr.HTML 无法访问本地绝对路径文件，故读图后以 data URI 内联，
+        避免额外暴露静态目录。找不到图返回 None（卡片自动降级为无图）。
+        """
+        path = self.random_sample_image(name)
+        if not path or not os.path.isfile(path):
+            return None
+        try:
+            from io import BytesIO
+            import base64
+            img = Image.open(path).convert("RGB")
+            # 限制尺寸，控制 HTML 体积（最长边 256px）
+            max_side = 256
+            if max(img.size) > max_side:
+                ratio = max_side / max(img.size)
+                img = img.resize((int(img.size[0] * ratio), int(img.size[1] * ratio)))
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=82)
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            return f"data:image/jpeg;base64,{b64}"
+        except Exception as _e:
+            print(f"[WARN] 样本图转 data URI 失败 {name}: {_e}")
+            return None
+
     def predict_json(self, image, text: str = "") -> dict:
         """结构化识别接口（REST API 与 Gradio 共用），返回 JSON 友好的 dict。
 
@@ -292,6 +445,11 @@ class HerbDemo:
         top5 = pred.get("top5") or []
         if top5:
             pred["_info"] = self.kg.get_info(top5[0].get("name")) or {}
+        # 注入药材样本图（base64 data URI）：候选 Top-5 + 相似药推荐，供卡片内联展示
+        for it in top5:
+            it["image_b64"] = self._sample_image_datauri(it.get("name"))
+        for it in (pred.get("similar") or []):
+            it["image_b64"] = self._sample_image_datauri(it.get("name"))
         return ui_cards.render_predict_cards(pred), DISCLAIMER_HTML
 
     def search_text_html(self, text: str) -> str:
@@ -829,7 +987,19 @@ def launch(config: Dict[str, Any], ckpt_path: str = None,
     # 默认只绑定本机回环地址，终端打印的 http://127.0.0.1:<port> 即为可直接访问的网址；
     # 如需局域网/手机访问，启动前设置 GRADIO_SERVER_HOST=0.0.0.0 即可。
     server_name = os.environ.get("GRADIO_SERVER_HOST", "127.0.0.1")
-    ui.launch(server_name=server_name, server_port=port)
+    # show_api=False：隐藏前端 "View API" 入口，避免浏览器触发 /info 文档路由
+    # （gradio_client 1.3.0 解析该路由有 bug，已由 _patch_gradio_client_bool_bug 兜底）。
+    # 注意：gradio 4.44.1 的 launch() 不支持 api_open 参数（它是 queue() 的参数），勿再传。
+    try:
+        ui.launch(server_name=server_name, server_port=port, show_api=False)
+    except ValueError as e:
+        # Gradio 4.x：当本机 localhost 被网络/代理环境判定为不可访问时，
+        # 会强制要求 share=True 才能启动。此处自动回退为创建公网临时链接。
+        if "shareable link" in str(e):
+            print("[WARN] 检测到 localhost 不可访问，自动回退为 share=True（生成公网临时链接）。")
+            ui.launch(server_name=server_name, server_port=port, share=True, show_api=False)
+        else:
+            raise
     print(f"\n[提示] 请在浏览器打开: http://127.0.0.1:{port}")
     if server_name == "0.0.0.0":
         import socket

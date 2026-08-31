@@ -21,6 +21,20 @@ function cleanName(name) {
   return idx > 0 ? name.slice(0, idx).trim() : name;
 }
 
+/** 对 Top-N 列表按药材名去重（忽略括号拼音后缀，如 人参(renshen) -> 人参），保留置信度最高的一条 */
+function dedupeTop(list) {
+  if (!Array.isArray(list)) return [];
+  var seen = {}, out = [];
+  list.forEach(function (it) {
+    if (!it || !it.name) return;
+    var key = cleanName(it.name);
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push(it);
+  });
+  return out;
+}
+
 /** 简易 Markdown：加粗 / 换行 / 无序列表 / 空行分段 */
 function mdToHtml(md) {
   if (!md) return "";
@@ -76,7 +90,7 @@ $$(".tab").forEach(function (tab) {
    root: 上传器容器，内含 [data-file-input] [data-drop-zone] [data-clear]
    ============================================================ */
 var uploadState = {
-  recognize: { file: null, preview: null },
+  recognize: { file: null, preview: null, cropList: [], cropActive: -1 },
   gradcam: { file: null, preview: null },
 };
 
@@ -87,6 +101,20 @@ function initUploader(root, key) {
   var img = $("img", preview);
   var clear = $("[data-clear]", root);
 
+  // 框选相关元素（仅 recognize 模块存在，gradcam 为 null）
+  var cropActions = key === "recognize" ? $("#crop-actions") : null;
+  var cropOverlay = key === "recognize" ? $("#crop-overlay") : null;
+
+  function exitCrop() {
+    if (cropOverlay) { cropOverlay.hidden = true; cropOverlay.parentElement.classList.remove("cropping"); }
+    if (cropActions) {
+      $("#btn-crop").hidden = false;
+      $("#btn-crop-confirm").hidden = true;
+      $("#btn-crop-cancel").hidden = true;
+      $("#btn-crop-reset").hidden = false;
+    }
+  }
+
   function setFile(file) {
     if (!file || !file.type.startsWith("image/")) return;
     uploadState[key].file = file;
@@ -95,6 +123,11 @@ function initUploader(root, key) {
     img.src = url;
     preview.hidden = false;
     drop.style.display = "none";
+    if (cropActions) {
+      cropActions.hidden = false;
+      $("#btn-crop-reset").hidden = true;  // 有"重新上传"按钮即可，reset 仅在框选态显示
+    }
+    exitCrop();
   }
 
   drop.addEventListener("click", () => input.click());
@@ -109,6 +142,10 @@ function initUploader(root, key) {
     input.value = "";
     preview.hidden = true;
     drop.style.display = "";
+    if (cropActions) {
+      cropActions.hidden = true;
+      exitCrop();
+    }
   });
 
   ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => {
@@ -125,6 +162,234 @@ function initUploader(root, key) {
 
 initUploader($(".uploader[data-uploader='recognize']"), "recognize");
 initUploader($(".uploader[data-uploader='gradcam']"), "gradcam");
+
+/* 执行图片识别（支持整图或框选裁剪图）。isCrop=true 表示 crop 模式 */
+function runRecognizeWithImage(imgFile, isCrop) {
+  var text = $("#recognize-text").value.trim();
+  var resultBox = $("#recognize-result");
+  var loading = $(".result-loading", resultBox);
+  var cards = $("#recognize-cards");
+  resultBox.hidden = false;
+  loading.hidden = false;
+  cards.innerHTML = "";
+  var btn = $("[data-identify]");
+  if (btn) btn.disabled = true;
+  return postForm("/predict" + (isCrop ? "?crop=1" : ""), (function () {
+    var fd = new FormData();
+    fd.append("image", imgFile);
+    fd.append("text", text);
+    return fd;
+  })()).then(function (data) {
+    loading.hidden = true;
+    if (data.error) { cards.innerHTML = '<div class="tcm-risk">' + esc(data.message) + "</div>"; return; }
+    renderPredict(data);
+  }, function (err) {
+    loading.hidden = true;
+    cards.innerHTML = '<div class="tcm-risk">请求失败：' + esc(err.message) + "</div>";
+  }).then(function () {
+    if (btn) btn.disabled = false;
+  });
+}
+
+/* ============ 图片识别：多框选区域识别 ============ */
+function initCrop() {
+  var img = $("#recognize-preview-img");
+  var overlay = $("#crop-overlay");
+  var rect = $("#crop-rect");
+  var stage = overlay ? overlay.parentElement : null;
+  var btnCrop = $("#btn-crop");
+  var btnConfirm = $("#btn-crop-confirm");
+  var btnCancel = $("#btn-crop-cancel");
+  var btnReset = $("#btn-crop-reset");
+  var btnClearCrops = $("#btn-crop-clear");
+  var cropListWrap = $("#crop-list");
+  if (!img || !overlay || !stage) return;
+
+  var drawing = false;
+  var startX = 0, startY = 0;
+  var sel = null; // {x,y,w,h} 相对图片显示区域（CSS 像素）
+
+  // 在 stage 上绘制已确认选区的持久痕迹（带编号角标）
+  function renderCropMarks() {
+    if (!stage) return;
+    var old = stage.querySelectorAll(".crop-mark");
+    old.forEach(function (el) { el.remove(); });
+    if (!uploadState.recognize.cropList.length) return;
+    uploadState.recognize.cropList.forEach(function (c, i) {
+      var mark = document.createElement("div");
+      mark.className = "crop-mark";
+      mark.style.left = c.x + "px";
+      mark.style.top = c.y + "px";
+      mark.style.width = c.w + "px";
+      mark.style.height = c.h + "px";
+      var badge = document.createElement("span");
+      badge.className = "crop-mark-no";
+      badge.textContent = i + 1;
+      mark.appendChild(badge);
+      stage.appendChild(mark);
+    });
+  }
+
+  // 已确认选区叠加层（每个选区一个 div，可点击删除）+ 原图上的框选痕迹
+  function renderCropList() {
+    if (cropListWrap) {
+      cropListWrap.innerHTML = "";
+      uploadState.recognize.cropList.forEach(function (c, i) {
+        var chip = document.createElement("span");
+        chip.className = "crop-chip";
+        chip.innerHTML = "选区 " + (i + 1) +
+          ' <button type="button" class="crop-chip-x" data-crop-del="' + i + '" title="删除该选区">×</button>';
+        cropListWrap.appendChild(chip);
+      });
+      var delBtns = cropListWrap.querySelectorAll("[data-crop-del]");
+      delBtns.forEach(function (b) {
+        b.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var idx = parseInt(b.getAttribute("data-crop-del"), 10);
+          uploadState.recognize.cropList.splice(idx, 1);
+          renderCropList();
+          syncIdentifyBtn();
+        });
+      });
+    }
+    renderCropMarks();
+    syncIdentifyBtn();
+  }
+
+  function refreshShades() {
+    if (!sel) {
+      [".crop-shade-t", ".crop-shade-b", ".crop-shade-l", ".crop-shade-r"].forEach(function (s) {
+        var el = $(s, overlay); if (el) el.style.cssText = "";
+      });
+      return;
+    }
+    var w = stage.clientWidth, h = stage.clientHeight;
+    var t = $(".crop-shade-t", overlay), b = $(".crop-shade-b", overlay);
+    var l = $(".crop-shade-l", overlay), r = $(".crop-shade-r", overlay);
+    if (t) { t.style.top = "0px"; t.style.left = "0px"; t.style.height = sel.y + "px"; t.style.width = w + "px"; }
+    if (b) { b.style.bottom = "0px"; b.style.left = "0px"; b.style.height = (h - sel.y - sel.h) + "px"; b.style.width = w + "px"; }
+    if (l) { l.style.top = sel.y + "px"; l.style.left = "0px"; l.style.width = sel.x + "px"; l.style.height = sel.h + "px"; }
+    if (r) { r.style.top = sel.y + "px"; r.style.right = "0px"; r.style.width = (w - sel.x - sel.w) + "px"; r.style.height = sel.h + "px"; }
+  }
+
+  function drawRect() {
+    if (!sel) { rect.style.cssText = "display:none"; return; }
+    rect.style.display = "block";
+    rect.style.left = sel.x + "px";
+    rect.style.top = sel.y + "px";
+    rect.style.width = sel.w + "px";
+    rect.style.height = sel.h + "px";
+    refreshShades();
+  }
+
+  function posInStage(e) {
+    var r = stage.getBoundingClientRect();
+    var cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    var cy = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
+    return { x: Math.max(0, Math.min(cx, r.width)), y: Math.max(0, Math.min(cy, r.height)) };
+  }
+
+  function begin(e) {
+    if (overlay.hidden) return;
+    e.preventDefault();
+    drawing = true;
+    var p = posInStage(e);
+    startX = p.x; startY = p.y;
+    sel = { x: p.x, y: p.y, w: 0, h: 0 };
+    uploadState.recognize.cropActive = -1;
+    drawRect();
+  }
+  function move(e) {
+    if (!drawing) return;
+    e.preventDefault();
+    var p = posInStage(e);
+    sel = {
+      x: Math.min(startX, p.x),
+      y: Math.min(startY, p.y),
+      w: Math.abs(p.x - startX),
+      h: Math.abs(p.y - startY)
+    };
+    drawRect();
+  }
+  function end() {
+    drawing = false;
+    if (sel && (sel.w < 8 || sel.h < 8)) { // 太小视为取消选区
+      sel = null; rect.style.cssText = "display:none"; refreshShades();
+    }
+  }
+
+  overlay.addEventListener("mousedown", begin);
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", end);
+  overlay.addEventListener("touchstart", begin, { passive: false });
+  overlay.addEventListener("touchmove", move, { passive: false });
+  overlay.addEventListener("touchend", end);
+
+  btnCrop.addEventListener("click", function () {
+    overlay.hidden = false;
+    stage.classList.add("cropping");
+    btnCrop.hidden = true;
+    btnConfirm.hidden = false;
+    btnCancel.hidden = false;
+  });
+
+  btnCancel.addEventListener("click", function () {
+    exitCropMode();
+  });
+
+  // 确认当前绘制的选区：加入 cropList（不退出框选态，可继续叠加框选）
+  btnConfirm.addEventListener("click", function () {
+    if (!sel || sel.w < 8 || sel.h < 8) { alert("请先框选一个有效区域"); return; }
+    uploadState.recognize.cropList.push({ x: sel.x, y: sel.y, w: sel.w, h: sel.h });
+    renderCropList();
+    if (btnClearCrops) btnClearCrops.hidden = false;
+    // 重置绘制态，保留框选模式以便继续画下一个框
+    sel = null; rect.style.cssText = "display:none"; refreshShades();
+  });
+
+  // 清除全部选区（保留原图）
+  if (btnClearCrops) {
+    btnClearCrops.addEventListener("click", function () {
+      uploadState.recognize.cropList = [];
+      renderCropList();
+    });
+  }
+
+  function exitCropMode() {
+    overlay.hidden = true;
+    stage.classList.remove("cropping");
+    sel = null; rect.style.cssText = "display:none"; refreshShades();
+    btnCrop.hidden = false;
+    btnConfirm.hidden = true;
+    btnCancel.hidden = true;
+  }
+
+  // 清除图片：复用上传器的 data-clear（已联动隐藏 crop-actions），这里确保退出框选
+  if (btnReset) {
+    btnReset.addEventListener("click", function () {
+      uploadState.recognize.cropList = [];
+      renderCropList();
+      exitCropMode();
+    });
+  }
+
+  // 暴露给识别流程：把某个选区(显示坐标)裁剪为图片文件
+  window.cropZoneToFile = function (c) {
+    var natW = img.naturalWidth, natH = img.naturalHeight;
+    var dispW = img.clientWidth, dispH = img.clientHeight;
+    if (!natW || !dispW) return null;
+    var sx = c.x / dispW * natW, sy = c.y / dispH * natH;
+    var sw = c.w / dispW * natW, sh = c.h / dispH * natH;
+    var canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(sw));
+    canvas.height = Math.max(1, Math.round(sh));
+    canvas.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    return new Promise(function (res) { canvas.toBlob(res, "image/png"); });
+  };
+
+  renderCropList();
+}
+initCrop();
 
 /* Ctrl+V 粘贴图片：优先投递给当前可见模块的上传器，否则投递给聊天附件 */
 document.addEventListener("paste", function (e) {
@@ -147,6 +412,14 @@ document.addEventListener("paste", function (e) {
         imgEl.src = uploadState[activeKey].preview;
         preview.hidden = false;
         drop.style.display = "none";
+        if (activeKey === "recognize") {
+          uploadState.recognize.cropList = [];
+          if (typeof syncIdentifyBtn === "function") syncIdentifyBtn();
+          var ca = $("#crop-actions");
+          if (ca) { ca.hidden = false; $("#btn-crop-reset").hidden = true; }
+          var ov = $("#crop-overlay");
+          if (ov) { ov.hidden = true; ov.parentElement.classList.remove("cropping"); }
+        }
       } else {
         chatAttachFile(file);
       }
@@ -156,40 +429,67 @@ document.addEventListener("paste", function (e) {
   }
 });
 
+/* 识别按钮文案随选区数量动态变化（智能分流提示） */
+function syncIdentifyBtn() {
+  var btn = $("[data-identify]");
+  if (!btn) return;
+  var n = (uploadState.recognize.cropList || []).length;
+  btn.textContent = n > 0 ? ("识别选区（" + n + " 个）") : "开始识别";
+}
+
 /* ============================================================
    模块 1：图片识别 → 药材档案大卡
    ============================================================ */
 $("[data-identify]").addEventListener("click", async function () {
-  var btn = this;
   var imgFile = uploadState.recognize.file;
   var text = $("#recognize-text").value.trim();
-  var resultBox = $("#recognize-result");
-  var loading = $(".result-loading", resultBox);
-  var cards = $("#recognize-cards");
 
   if (!imgFile && !text) {
     alert("请上传图片或输入文字描述。");
     return;
   }
+
+  // 智能分流：有多个选区则批量识别选区，否则整图识别
+  var crops = uploadState.recognize.cropList;
+  if (imgFile && crops && crops.length) {
+    await runRecognizeMulti(crops);
+    return;
+  }
+  runRecognizeWithImage(imgFile, false);
+});
+
+/* 批量识别多个选区：逐个裁剪并调用 /predict_multi */
+async function runRecognizeMulti(crops) {
+  var btn = $("[data-identify]");
+  var resultBox = $("#recognize-result");
+  var loading = $(".result-loading", resultBox);
+  var cards = $("#recognize-cards");
   resultBox.hidden = false;
   loading.hidden = false;
   cards.innerHTML = "";
-  btn.disabled = true;
+  if (btn) btn.disabled = true;
   try {
+    var files = [];
+    for (var i = 0; i < crops.length; i++) {
+      var blob = await window.cropZoneToFile(crops[i]);
+      if (!blob) { alert("选区 " + (i + 1) + " 裁剪失败，请重试"); return; }
+      files.push(new File([blob], "zone" + i + ".png", { type: "image/png" }));
+    }
     var fd = new FormData();
-    if (imgFile) fd.append("image", imgFile);
-    fd.append("text", text);
-    var data = await postForm("/predict", fd);
+    files.forEach(function (f) { fd.append("images", f); });
+    var resp = await fetch("/predict_multi", { method: "POST", body: fd });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    var data = await resp.json();
     loading.hidden = true;
     if (data.error) { cards.innerHTML = '<div class="tcm-risk">' + esc(data.message) + "</div>"; return; }
-    renderPredict(data);
+    renderPredictMulti(data);
   } catch (err) {
     loading.hidden = true;
     cards.innerHTML = '<div class="tcm-risk">请求失败：' + esc(err.message) + "</div>";
   } finally {
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
-});
+}
 
 /* ============================================================
    收藏夹（后端 JSON 持久化）
@@ -465,7 +765,8 @@ function renderPredict(data) {
 
   if (isImg && top1) {
     html += '<div class="tcm-section-title">识别结果（Top-1）</div>';
-    html += '<div class="tcm-card" style="border-left:4px solid var(--vermilion)">';
+    html += '<div class="tcm-card tcm-card-top1" data-herb="' + esc(top1.name) + '" style="border-left:4px solid var(--vermilion)">';
+    html += '<div class="tcm-card-body">';
     html += "<h4>" + esc(cleanName(top1.name)) + favStarHerb(cleanName(top1.name), top1) + "</h4>";
     html += toxBadge(top1.toxicity);
     if (data.low_confidence) {
@@ -473,14 +774,14 @@ function renderPredict(data) {
     }
     html += '<div class="tcm-bar"><span style="width:' + (top1.prob * 100).toFixed(1) + '%"></span></div>';
     html += '<div class="detail-muted">置信度 ' + (top1.prob * 100).toFixed(1) + "%</div>";
-    html += "</div>";
+    html += "</div></div>";
   }
 
   if (rest.length) {
     html += '<div class="tcm-section-title">候选（Top-2 ~ 5）</div>';
     html += '<div class="tcm-grid">';
     rest.forEach(function (it) {
-      html += '<div class="tcm-card">';
+      html += '<div class="tcm-card" data-herb="' + esc(it.name) + '">';
       html += "<h4>" + esc(cleanName(it.name)) + favStarHerb(cleanName(it.name), it) + "</h4>";
       html += toxBadge(it.toxicity);
       html += '<div class="tcm-bar"><span style="width:' + (it.prob * 100).toFixed(1) + '%"></span></div>';
@@ -504,7 +805,7 @@ function renderPredict(data) {
           });
         });
       }
-      html += '<div class="tcm-card">';
+      html += '<div class="tcm-card" data-herb="' + esc(it.name) + '">';
       html += "<h4>" + esc(cleanName(it.name)) + favStarHerb(cleanName(it.name), it) + "</h4>";
       html += toxBadge(it.toxicity);
       if (hitChips) html += '<div style="margin-top:4px">' + hitChips + "</div>";
@@ -528,7 +829,7 @@ function renderPredict(data) {
     html += '<div class="tcm-section-title">相似药推荐</div>';
     html += '<div class="tcm-grid">';
     data.similar.forEach(function (s) {
-      html += '<div class="tcm-card">';
+      html += '<div class="tcm-card" data-herb="' + esc(s.name) + '">';
       html += "<h4>" + esc(cleanName(s.name)) + favStarHerb(cleanName(s.name), s) + "</h4>";
       if (s.categories && s.categories.length) {
         html += s.categories.map(c => '<span class="tcm-badge tcm-badge-gray">' + esc(c) + "</span>").join("");
@@ -594,6 +895,149 @@ function renderPredict(data) {
   // 免责声明
   html += '<div class="tcm-disclaimer" style="margin-top:16px">⚠ <strong>医疗风险提示</strong>：以上内容仅供科普与学习参考，不构成医疗诊断或用药建议，请咨询执业中医师或药师。</div>';
   cards.innerHTML = html;
+  attachHerbThumbs(cards);
+}
+
+/* 异步为结果卡片中的药材附上训练/验证集聚类样本图（同名保留同一张） */
+function attachHerbThumbs(container) {
+  if (!container) return;
+  var nodes = container.querySelectorAll('.tcm-card[data-herb]');
+  if (!nodes.length) return;
+  // 去重收集药材名
+  var seen = {}, names = [];
+  Array.prototype.forEach.call(nodes, function (n) {
+    var nm = n.getAttribute('data-herb');
+    if (nm && !seen[nm]) { seen[nm] = true; names.push(nm); }
+  });
+  if (!names.length) return;
+  fetch('/herb_sample_image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ names: names })
+  }).then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (resp) {
+      if (!resp || !resp.images) return;
+      Array.prototype.forEach.call(nodes, function (n) {
+        var nm = n.getAttribute('data-herb');
+        var b64 = resp.images[nm];
+        if (!b64) return;
+        if (n.querySelector('.tcm-thumb')) return; // 已注入，避免重复
+        var img = document.createElement('img');
+        img.className = 'tcm-thumb';
+        img.src = b64;
+        img.alt = nm;
+        n.insertBefore(img, n.firstChild);
+      });
+    }).catch(function () { /* 样本图缺失不影响主流程 */ });
+}
+
+/* 多选区批量识别结果：每个选区一张卡 + 跨区配伍分析 + 联动入口 */
+function renderPredictMulti(data) {
+  var cards = $("#recognize-cards");
+  var html = "";
+  var zones = data.zones || [];
+  var compat = data.compat || {};
+
+  if (!zones.length) {
+    cards.innerHTML = '<div class="tcm-risk">未能识别任何选区。</div>';
+    return;
+  }
+
+  zones.forEach(function (z, i) {
+    if (z.error) {
+      html += '<div class="tcm-section-title">选区 ' + (i + 1) + '</div>';
+      html += '<div class="tcm-risk">' + esc(z.message || "选区识别失败") + "</div>";
+      return;
+    }
+    var top5 = dedupeTop(z.top5);
+    var top1 = top5[0];
+    var rest = top5.slice(1);
+    html += '<div class="tcm-section-title">选区 ' + (i + 1) + ' · 识别结果</div>';
+    if (top1) {
+      html += '<div class="tcm-card tcm-card-top1" data-herb="' + esc(top1.name) + '" style="border-left:4px solid var(--vermilion)">';
+      html += '<div class="tcm-card-body">';
+      html += "<h4>" + esc(cleanName(top1.name)) + favStarHerb(cleanName(top1.name), top1) + "</h4>";
+      html += toxBadge(top1.toxicity);
+      if (z.low_confidence) html += '<span class="tcm-badge tcm-badge-warn">置信度较低，建议人工复核</span>';
+      html += '<div class="tcm-bar"><span style="width:' + (top1.prob * 100).toFixed(1) + '%"></span></div>';
+      html += '<div class="detail-muted">置信度 ' + (top1.prob * 100).toFixed(1) + "%</div>";
+      html += "</div></div>";
+    }
+    if (rest.length) {
+      html += '<div class="tcm-grid">';
+      rest.forEach(function (it) {
+        html += '<div class="tcm-card" data-herb="' + esc(it.name) + '">';
+        html += "<h4>" + esc(cleanName(it.name)) + favStarHerb(cleanName(it.name), it) + "</h4>";
+        html += toxBadge(it.toxicity);
+        html += '<div class="tcm-bar"><span style="width:' + (it.prob * 100).toFixed(1) + '%"></span></div>';
+        html += '<div class="detail-muted">' + (it.prob * 100).toFixed(1) + "%</div>";
+        html += "</div>";
+      });
+      html += "</div>";
+    }
+    if (z.kg_info) {
+      html += '<div class="tcm-card">' + mdToHtml(z.kg_info) + "</div>";
+    }
+    if (z.confusable && z.confusable.peer) {
+      html += '<div class="tcm-risk">⚠ 与 <strong>' + esc(cleanName(z.confusable.peer)) + "</strong> 外观相似，请注意鉴别。</div>";
+    }
+  });
+
+  // 跨区配伍分析（知识图谱：十八反/十九畏/相须相使）
+  var pairs = compat.pairs || [];
+  if (pairs.length) {
+    html += '<div class="tcm-section-title">跨选区配伍分析</div>';
+    html += '<div class="tcm-card">';
+    pairs.forEach(function (p) {
+      var a = esc(cleanName(p.a)), b = esc(cleanName(p.b));
+      if (p.relation === "incompatible") {
+        html += '<div class="tcm-risk">⚠️ ' + a + ' 与 ' + b + ' 存在十八反配伍禁忌，不建议同用。</div>';
+      } else if (p.relation === "restraint") {
+        html += '<div class="tcm-risk">⚠️ ' + a + ' 与 ' + b + ' 存在十九畏配伍顾忌，需谨慎同用。</div>';
+      } else if (p.relation === "paired") {
+        html += '<div class="tcm-ok">✅ ' + a + ' 与 ' + b + ' 为常用相须相使配伍，可以一起使用。</div>';
+      }
+    });
+    html += "</div>";
+  }
+
+  // 多药联动入口：一键送去对话分析 / 图谱聚焦
+  var herbNames = zones.map(function (z) {
+    var t = (z.top5 || [])[0];
+    return t ? cleanName(t.name) : "";
+  }).filter(Boolean);
+  if (herbNames.length >= 1) {
+    html += '<div class="multi-actions">';
+    html += '<button type="button" class="btn-ghost btn-sm" id="btn-multi-chat">💬 多药对话分析</button>';
+    html += '<button type="button" class="btn-ghost btn-sm" id="btn-multi-graph">🕸 图谱聚焦</button>';
+    html += "</div>";
+  }
+
+  html += '<div class="tcm-disclaimer" style="margin-top:16px">⚠ <strong>医疗风险提示</strong>：以上内容仅供科普与学习参考，不构成医疗诊断或用药建议，请咨询执业中医师或药师。</div>';
+  cards.innerHTML = html;
+
+  // 绑定联动按钮
+  var chatBtn = $("#btn-multi-chat");
+  if (chatBtn) chatBtn.addEventListener("click", function () {
+    var q = "请解析以下药材：" + herbNames.join("、") + "。包括各自药性、是否可以配伍同用，以及使用注意。";
+    var ta = $("#chat-input");
+    if (ta) ta.value = q;
+    var chatTab = $('[data-tab="chat"]') || $("#tab-chat");
+    if (chatTab) chatTab.click();
+    ta && ta.focus();
+  });
+  var gBtn = $("#btn-multi-graph");
+  if (gBtn) gBtn.addEventListener("click", function () {
+    // 图谱聚焦当前仅支持单药材，默认聚焦第一味（其余可在图谱搜索框继续）
+    var focus = herbNames[0] || "";
+    $("#graph-focus").value = focus;
+    $$(".tab").forEach(function (t) {
+      if (t.dataset.tab === "graph") t.click();
+    });
+    loadGraph(focus);
+  });
+
+  attachHerbThumbs(cards);
 }
 
 /* ============================================================

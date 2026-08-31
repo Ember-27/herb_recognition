@@ -36,6 +36,14 @@ def _bar(ratio: float, label: str = "") -> str:
     return (f'<div class="tcm-bar"><i style="width:{pct:.1f}%"></i></div>{suffix}')
 
 
+def _sample_img(image_b64: Optional[str], name: str, cls: str = "tcm-thumb") -> str:
+    """渲染药材样本图（base64 data URI 内联）；无图时返回占位说明。"""
+    if not image_b64:
+        return (f'<div class="{cls} tcm-thumb-empty">'
+                f'<span>暂无「{_esc(name)}」样本图</span></div>')
+    return f'<img class="{cls}" src="{image_b64}" alt="{_esc(name)} 样本图" />'
+
+
 def _tags(items) -> str:
     if not items:
         return ""
@@ -89,7 +97,9 @@ def render_predict_cards(pred: dict) -> str:
     similar = pred.get("similar") or []
     if similar:
         sim_items = "".join(
-            f'<div class="tcm-grid-card"><div class="nm">{_esc(s["name"])}</div>'
+            f'<div class="tcm-grid-card">'
+            f'{_sample_img(s.get("image_b64"), s.get("name", ""))}'
+            f'<div class="nm">{_esc(s["name"])}</div>'
             f'<div class="sc">{_esc("、".join(s.get("categories") or []))}</div></div>'
             for s in similar)
         parts.append(_section("相似药材（功效相近）", f'<div class="tcm-grid">{sim_items}</div>'))
@@ -147,12 +157,17 @@ def _candidates_block(top5: list, pred: dict) -> str:
 
     top1 = f"""
     <div class="tcm-card tcm-top1">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-        <div class="name">{_esc(first.get("name"))}</div>
-        {_tox_badge(first.get("toxicity"))}
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+        {_sample_img(first.get("image_b64"), first.get("name", ""), cls="tcm-top1-img")}
+        <div style="flex:1;min-width:240px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <div class="name">{_esc(first.get("name"))}</div>
+            {_tox_badge(first.get("toxicity"))}
+          </div>
+          {bar}
+          {sub}
+        </div>
       </div>
-      {bar}
-      {sub}
     </div>"""
 
     rest = top5[1:]
@@ -166,7 +181,9 @@ def _candidates_block(top5: list, pred: dict) -> str:
         else:
             sc = f"匹配分 {x.get('score')}"
         cells.append(
-            f'<div class="tcm-grid-card"><div class="nm">{_esc(x.get("name"))}</div>'
+            f'<div class="tcm-grid-card">'
+            f'{_sample_img(x.get("image_b64"), x.get("name", ""))}'
+            f'<div class="nm">{_esc(x.get("name"))}</div>'
             f'<div class="sc">{sc}</div>{_tox_badge(x.get("toxicity"))}</div>')
     return top1 + f'<div class="tcm-grid">{"".join(cells)}</div>'
 
