@@ -35,25 +35,109 @@ function dedupeTop(list) {
   return out;
 }
 
-/** 简易 Markdown：加粗 / 换行 / 无序列表 / 空行分段 */
+/**
+ * Markdown -> HTML 渲染器（内置，无外部依赖）。
+ * 支持：标题(#~######)、有序/无序列表、引用(>)、围栏代码块(```)、
+ *       行内代码、表格(|)、加粗、斜体、链接、分割线(---)、段落。
+ * 原始文本先经 esc() 转义，避免 LLM 输出导致的 XSS。
+ */
+function inlineMd(s) {
+  return s
+    .replace(/`([^`]+?)`/g, (_, c) => "<code>" + c + "</code>")
+    .replace(/\*\*([^*]+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/__([^_]+?)__/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, "$1<em>$2</em>")
+    .replace(/(^|[^_])_([^_\n]+?)_(?!_)/g, "$1<em>$2</em>")
+    .replace(/\[([^\]]+?)\]\((https?:\/\/[^\s)]+?)\)/g,
+             '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
 function mdToHtml(md) {
   if (!md) return "";
-  let lines = String(md).split("\n");
-  let html = "", listOpen = false;
-  for (let line of lines) {
-    line = esc(line);
-    let listMatch = line.match(/^\s*[-*•]\s+(.*)/);
-    if (listMatch) {
-      if (!listOpen) { html += '<ul class="md-list">'; listOpen = true; }
-      html += "<li>" + listMatch[1].replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>") + "</li>";
+  const lines = String(md).split("\n");
+  let html = "", i = 0;
+  const state = { list: null, para: [] };
+  const closeList = () => { if (state.list) { html += state.list === "ol" ? "</ol>" : "</ul>"; state.list = null; } };
+  const flushPara = () => {
+    if (state.para.length) {
+      html += "<p>" + state.para.map(l => inlineMd(esc(l))).join("<br>") + "</p>";
+      state.para = [];
+    }
+  };
+  const tableToHtml = (block) => {
+    const rows = block.map(r => r.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim()));
+    let t = '<table class="md-table"><thead><tr>';
+    rows[0].forEach(c => t += "<th>" + inlineMd(esc(c)) + "</th>");
+    t += "</tr></thead><tbody>";
+    rows.slice(2).forEach(r => { t += "<tr>"; r.forEach(c => t += "<td>" + inlineMd(esc(c)) + "</td>"); t += "</tr>"; });
+    return t + "</tbody></table>";
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // 围栏代码块
+    if (/^```/.test(line.trim())) {
+      closeList(); flushPara();
+      const buf = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i].trim())) { buf.push(esc(lines[i])); i++; }
+      i++;
+      html += '<pre class="md-pre"><code>' + buf.join("\n") + "</code></pre>";
       continue;
     }
-    if (listOpen) { html += "</ul>"; listOpen = false; }
-    line = line.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-    if (line.trim() === "") { html += "<br>"; continue; }
-    html += line + "<br>";
+    // 标题
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      closeList(); flushPara();
+      const lvl = h[1].length;
+      html += `<h${lvl} class="md-h md-h${lvl}">` + inlineMd(esc(h[2])) + `</h${lvl}>`;
+      i++; continue;
+    }
+    // 分割线
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      closeList(); flushPara();
+      html += '<hr class="md-hr">';
+      i++; continue;
+    }
+    // 引用
+    if (/^>\s?/.test(line)) {
+      closeList(); flushPara();
+      const buf = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) { buf.push(lines[i].replace(/^>\s?/, "")); i++; }
+      html += '<blockquote class="md-quote">' + buf.map(l => inlineMd(esc(l))).join("<br>") + "</blockquote>";
+      continue;
+    }
+    // 表格
+    if (/\|/.test(line) && i + 1 < lines.length &&
+        /^\s*\|?[\s:|-]+\|[\s:|-]+\|?\s*$/.test(lines[i + 1]) && /-/.test(lines[i + 1])) {
+      closeList(); flushPara();
+      const buf = [line];
+      i++;
+      while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim() !== "") { buf.push(lines[i]); i++; }
+      html += tableToHtml(buf);
+      continue;
+    }
+    // 列表项（含中文•、有序 1. 2)）
+    const li = line.match(/^\s*([-*•]|\d+[.)])\s+(.*)$/);
+    if (li) {
+      flushPara();
+      const tag = /\d/.test(li[1]) ? "ol" : "ul";
+      if (state.list !== tag) { closeList(); html += `<${tag} class="md-list">`; state.list = tag; }
+      html += "<li>" + inlineMd(esc(li[2])) + "</li>";
+      i++; continue;
+    }
+    // 空行
+    if (line.trim() === "") { closeList(); flushPara(); i++; continue; }
+    // 普通段落
+    state.para.push(line.trim());
+    i++;
   }
-  if (listOpen) html += "</ul>";
+  closeList(); flushPara();
+  // 防御：若解析后无有效 HTML 但原文本非空（解析器可能遇到未知格式），
+  // 回退为纯文本逐行显示，避免界面出现完全空白。
+  if (!html.trim() && md.toString().trim()) {
+    html = "<p>" + esc(md).replace(/\r?\n/g, "<br>") + "</p>";
+  }
   return html;
 }
 
@@ -1216,7 +1300,8 @@ function renderGradcam(stage, info) {
    模块 4：AI 对话（聊天室）
    ============================================================ */
 var chatHistory = [];   // [{role, content}] 发给后端
-var chatAttachData = null; // {file, url}
+var chatAttachData = []; // [{file, url, base64}] 支持多图同时识别
+var CHAT_ATTACH_MAX = 6; // 单次最多上传图片数
 
 var lastChat = { q: "", a: "", s: [] };   // 最近一条助手回答，供收藏对话使用
 var lastChatImgBase64 = null;              // 最近一条对话的附图 base64，供收藏上传
@@ -1225,11 +1310,14 @@ function chatAddMsg(role, contentHtml, extra) {
   var box = $("#chat-history");
   var wrap = document.createElement("div");
   wrap.className = "chat-msg " + role;
-  if (extra && extra.imgUrl) {
-    var img = document.createElement("img");
-    img.className = "msg-img";
-    img.src = extra.imgUrl;
-    wrap.appendChild(img);
+  if (extra) {
+    var urls = extra.imgs || (extra.imgUrl ? [extra.imgUrl] : []);
+    urls.forEach(function (u) {
+      var img = document.createElement("img");
+      img.className = "msg-img";
+      img.src = u;
+      wrap.appendChild(img);
+    });
   }
   var div = document.createElement("div");
   div.innerHTML = contentHtml;
@@ -1256,26 +1344,69 @@ function chatAddMsg(role, contentHtml, extra) {
   return wrap;
 }
 
-function chatAttachFile(file) {
-  if (!file || !file.type.startsWith("image/")) return;
-  if (chatAttachData && chatAttachData.url) URL.revokeObjectURL(chatAttachData.url);
-  chatAttachData = { file: file, url: URL.createObjectURL(file), base64: null };
-  var reader = new FileReader();
-  reader.onload = function (e) { chatAttachData.base64 = e.target.result; };
-  reader.readAsDataURL(file);
+function renderChatAttach() {
   var box = $("#chat-attach");
-  box.hidden = false;
-  $("img", box).src = chatAttachData.url;
+  var list = box.querySelector(".chat-attach-list");
+  list.innerHTML = "";
+  (chatAttachData || []).forEach(function (item, i) {
+    var thumb = document.createElement("div");
+    thumb.className = "chat-thumb";
+    var img = document.createElement("img");
+    img.src = item.url;
+    img.alt = "附件 " + (i + 1);
+    var x = document.createElement("button");
+    x.type = "button";
+    x.className = "chat-thumb-x";
+    x.textContent = "×";
+    x.title = "移除该图片";
+    x.setAttribute("data-attach-remove", String(i));
+    thumb.appendChild(img);
+    thumb.appendChild(x);
+    list.appendChild(thumb);
+  });
+  box.hidden = !chatAttachData || chatAttachData.length === 0;
+}
+
+function chatAttachFiles(files) {
+  if (!files || !files.length) return;
+  chatAttachData = chatAttachData || [];
+  Array.prototype.forEach.call(files, function (f) {
+    if (!f.type || !f.type.startsWith("image/")) return;
+    if (chatAttachData.length >= CHAT_ATTACH_MAX) {
+      toast("最多同时上传 " + CHAT_ATTACH_MAX + " 张图片");
+      return;
+    }
+    var item = { file: f, url: URL.createObjectURL(f), base64: null };
+    var reader = new FileReader();
+    reader.onload = function (e) { item.base64 = e.target.result; };
+    reader.readAsDataURL(f);
+    chatAttachData.push(item);
+  });
+  renderChatAttach();
 }
 
 $("[data-attach]").addEventListener("click", () => $("#chat-file").click());
 $("#chat-file").addEventListener("change", function () {
-  if (this.files[0]) chatAttachFile(this.files[0]);
+  chatAttachFiles(this.files);
+  this.value = ""; // 允许重复选择同一文件
 });
-$("[data-attach-clear]").addEventListener("click", function () {
-  chatAttachData = null;
-  $("#chat-attach").hidden = true;
-  $("#chat-file").value = "";
+// 委托处理：单个缩略图的 × 移除、以及"清空"
+$("#chat-attach").addEventListener("click", function (e) {
+  var x = e.target.closest("[data-attach-remove]");
+  if (x) {
+    var i = parseInt(x.getAttribute("data-attach-remove"), 10);
+    if (chatAttachData && chatAttachData[i]) {
+      if (chatAttachData[i].url) URL.revokeObjectURL(chatAttachData[i].url);
+      chatAttachData.splice(i, 1);
+    }
+    renderChatAttach();
+    return;
+  }
+  if (e.target.closest("[data-attach-clear]")) {
+    chatAttachData.forEach(function (it) { if (it.url) URL.revokeObjectURL(it.url); });
+    chatAttachData = [];
+    renderChatAttach();
+  }
 });
 
 /* ---------- 拖拽 & 粘贴上传（AI 对话） ---------- */
@@ -1301,8 +1432,32 @@ $("[data-attach-clear]").addEventListener("click", function () {
   box.addEventListener("drop", function (e) {
     e.preventDefault();
     box.classList.remove("drag-over");
-    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    if (f) chatAttachFile(f);
+    var fs = e.dataTransfer && e.dataTransfer.files;
+    // 兜底：部分浏览器 drop 时 files 为空，需从 items 取
+    if ((!fs || !fs.length) && e.dataTransfer && e.dataTransfer.items) {
+      var picked = [];
+      Array.prototype.forEach.call(e.dataTransfer.items, function (it) {
+        if (it.kind === "file") {
+          var f = it.getAsFile();
+          if (f) picked.push(f);
+        }
+      });
+      fs = picked;
+    }
+    if (fs && fs.length) chatAttachFiles(fs);
+  });
+
+  // 在窗口层阻止文件拖拽的默认导航行为，确保 drop 落在本容器而非被浏览器打开
+  window.addEventListener("dragover", function (e) {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) {
+      e.preventDefault();
+    }
+  });
+  window.addEventListener("drop", function (e) {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")
+        && !box.contains(e.target)) {
+      e.preventDefault();
+    }
   });
 
   // 粘贴：在对话输入框粘贴图片即可附图
@@ -1316,7 +1471,7 @@ $("[data-attach-clear]").addEventListener("click", function () {
     var f = item.getAsFile();
     if (f) {
       e.preventDefault();
-      chatAttachFile(f);
+      chatAttachFiles([f]);
     }
   });
 })();
@@ -1333,10 +1488,11 @@ async function sendChat() {
   var input = $("#chat-input");
   var question = input.value.trim();
   var btn = $("[data-send]");
-  if (!question && !chatAttachData) { alert("请输入问题或上传图片。"); return; }
+  if (!question && (!chatAttachData || !chatAttachData.length)) { alert("请输入问题或上传图片。"); return; }
 
-  chatAddMsg("user", esc(question || (chatAttachData ? "（图片）" : "")),
-    chatAttachData ? { imgUrl: chatAttachData.url } : null);
+  var attach = chatAttachData && chatAttachData.length ? chatAttachData.slice() : null;
+  chatAddMsg("user", esc(question || ("（" + attach.length + " 张图片）")),
+    attach ? { imgs: attach.map(function (it) { return it.url; }) } : null);
   chatHistory.push({ role: "user", content: question });
   input.value = "";
   btn.disabled = true;
@@ -1345,7 +1501,7 @@ async function sendChat() {
   try {
     var fd = new FormData();
     fd.append("question", question);
-    if (chatAttachData) fd.append("image", chatAttachData.file);
+    if (attach) attach.forEach(function (it) { fd.append("images", it.file); }); // 多图循环上传
     fd.append("history", JSON.stringify(chatHistory.slice(0, -1)));
     var data = await postForm("/chat", fd);
     tmp.remove();
@@ -1360,14 +1516,15 @@ async function sendChat() {
       html += "</div></details>";
     }
     lastChat = { q: question, a: data.answer || data.message || "", s: data.rag_sources || [] };
-    if (chatAttachData && chatAttachData.file && !chatAttachData.base64) {
-      lastChatImgBase64 = await new Promise(function (resolve) {
+    // 收藏接口为单图字段，多图时收藏第一张
+    if (attach && attach[0]) {
+      lastChatImgBase64 = attach[0].base64 || await new Promise(function (resolve) {
         var r = new FileReader();
         r.onload = function (e) { resolve(e.target.result); };
-        r.readAsDataURL(chatAttachData.file);
+        r.readAsDataURL(attach[0].file);
       });
     } else {
-      lastChatImgBase64 = chatAttachData ? chatAttachData.base64 : null;
+      lastChatImgBase64 = null;
     }
     chatAddMsg("assistant", html, { fav: lastChat });
     chatHistory.push({ role: "assistant", content: data.answer || "" });

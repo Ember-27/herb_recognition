@@ -331,13 +331,13 @@ def herbs():
 
 
 @app.post("/chat")
-async def chat(image: UploadFile = None, question: str = Form(""),
-               history: str = Form("[]")):
+async def chat(images: list[UploadFile] = File(None),
+               question: str = Form(""), history: str = Form("[]")):
     """外部 LLM 对话解释：本地识别 → 组装多轮上下文 → 调用 LLM 生成回答。
 
     请求（multipart/form-data）:
       question  必填，用户问题（如"这是什么药材？"）
-      image     可选，草药图片；有图走多模态识别，无图走特性检索 Top-5
+      images    可选，一张或多张草药图片（同时识别，合并上下文并做跨图配伍分析）
       history   可选，多轮对话历史 JSON 字符串:
                 [{"role":"user","content":"..."},{"role":"assistant","content":"..."}]
 
@@ -352,16 +352,23 @@ async def chat(image: UploadFile = None, question: str = Form(""),
     if not question:
         return {"error": "empty_question", "message": "请输入问题 question。"}
 
-    # 1) 接收图片：有图走多模态识别（question 仅作为用户问题，不污染分类文本）
+    # 1) 接收图片：统一使用 images 字段（单图也是该数组，前端始终发送 images）
     img = None
-    if image is not None:
-        data = await image.read()
-        if data:
-            img = np.array(Image.open(io.BytesIO(data)).convert("RGB"))
+    imgs = None
+    if images:
+        imgs = []
+        for f in images:
+            data = await f.read()
+            if data:
+                try:
+                    imgs.append(np.array(Image.open(io.BytesIO(data)).convert("RGB")))
+                except Exception:
+                    continue
+        if not imgs:
+            imgs = None
 
-    # 2) 构建本地识别上下文：有图走图片识别（图文混合问答），
-    #    无图则从自然语言问题提取药材名，提取不到时回退特性检索 Top-5
-    context, herbs, pred = demo.build_chat_context(question, img)
+    # 2) 构建本地识别上下文：多图逐张识别合并、单图识别、无图文本检索
+    context, herbs, pred = demo.build_chat_context(question, img, imgs)
     # 2.5) RAG 知识库检索依据（首次调用懒加载本地 BERT，失败不影响主流程）
     rag_text, rag_sources = "", []
     try:

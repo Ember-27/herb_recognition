@@ -113,11 +113,26 @@ class LLMClient:
                     continue
                 raise LLMError(f"LLM 请求超时（{self.timeout:.0f}s），请稍后重试。")
             except httpx.HTTPStatusError as e:
-                if e.response.status_code in _RETRY_STATUS and attempt < _MAX_RETRIES - 1:
+                status = e.response.status_code
+                # 可重试状态码（如 429 限流 / 5xx 服务端错误）按重试逻辑处理
+                if status in _RETRY_STATUS and attempt < _MAX_RETRIES - 1:
                     time.sleep(_RETRY_DELAY * (attempt + 1))
                     continue
+                # 根据状态码给出可读的错误原因说明
+                if status == 401:
+                    # 401: 认证失败，API Key 无效（过期/被重置/复制出错/平台填错）
+                    raise LLMError(
+                        f"LLM 接口返回错误 401: API Key 无效或未授权，请检查 DEEPSEEK_API_KEY "
+                        f"是否正确（是否过期、被重置或复制时带入空格）。原始信息: "
+                        f"{e.response.text[:200]}")
+                if status == 402:
+                    # 402: 账户余额不足（DeepSeek API 为预付费模式，余额为 0 时所有请求均被拒）
+                    raise LLMError(
+                        f"LLM 接口返回错误 402: DeepSeek 账户余额不足，请到 "
+                        f"platform.deepseek.com 充值后重试。原始信息: {e.response.text[:200]}")
+                # 其他状态码（如 400 参数错误 / 404 模型不存在 / 429 超限）透传原始信息
                 raise LLMError(
-                    f"LLM 接口返回错误 {e.response.status_code}: {e.response.text[:200]}")
+                    f"LLM 接口返回错误 {status}: {e.response.text[:200]}")
             except httpx.HTTPError as e:
                 raise LLMError(f"LLM 请求失败: {e}")
             except (KeyError, IndexError, ValueError) as e:

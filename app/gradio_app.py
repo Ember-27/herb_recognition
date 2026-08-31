@@ -635,14 +635,46 @@ class HerbDemo:
                 lines.append("暂无可推荐的配伍（或均存在禁忌）。")
         return "\n\n".join(lines)
 
-    def build_chat_context(self, question: str, image=None):
+    def build_chat_context(self, question: str, image=None, images=None):
         """构造 AI 对话的本地上下文。
 
         支持图文混合：优先从问题中提取药材名并查询知识图谱；
-        若同时提供图片（image），以图片识别结果作为上下文主体，文本问题作为补充。
-        提取不到药材名时回退为特性检索。返回 (context, herbs, pred_dict)。
+        若同时提供图片（image 单图 / images 多图），以图片识别结果作为上下文主体，
+        文本问题作为补充。多图会逐张本地识别后合并上下文，并对各图 Top-1 药材
+        做跨图配伍分析。提取不到药材名时回退为特性检索。返回 (context, herbs, pred_dict)。
         """
-        # 图文混合问答：图片优先做本地识别，识别结果作为对话上下文
+        # 多图：逐张本地识别 → 合并上下文（每图一段 + 跨图配伍分析）
+        if images:
+            zone_preds = []
+            for img in images:
+                zone_preds.append(self.predict_json(img, ""))
+            parts, herbs = [], []
+            for i, pred in enumerate(zone_preds, 1):
+                top5 = pred.get("top5") or []
+                lines = [f"【图片 {i} 识别结果】"]
+                if not top5:
+                    lines.append(pred.get("message", "未识别到相关药材。"))
+                else:
+                    lines += [f"{j}. {it['name']}（置信度 {it['prob'] * 100:.1f}%）"
+                              for j, it in enumerate(top5, 1)]
+                    kg = pred.get("kg_info")
+                    if kg:
+                        lines.append(kg)
+                if pred.get("mode") == "image" and top5:
+                    herbs.append(top5[0]["name"])
+                parts.append("\n".join(lines))
+            context = "\n\n".join(parts)
+            herbs = list(dict.fromkeys(herbs))[:3]  # 各图 Top-1 去重，供 RAG 与配伍分析
+            if herbs:
+                context += "\n\n" + self._build_context_from_herbs(herbs, question)
+            pred = {
+                "mode": "multi_image",
+                "zones": zone_preds,
+                "top5": zone_preds[0].get("top5") if zone_preds else [],
+                "kg_info": context,
+            }
+            return context, herbs, pred
+        # 图文混合问答（单图）：图片优先做本地识别，识别结果作为对话上下文
         if image is not None:
             pred = self.predict_json(image, question)
             context = _local_answer(pred)

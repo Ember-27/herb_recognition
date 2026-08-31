@@ -187,8 +187,9 @@
 
       <div class="chat-compose">
         <div class="chat-attach" id="chat-attach" hidden>
-          <img src="images/_02/icons8-图片-25.png" alt="" onerror="this.src='images/_02/icons8-图片-25.png'">
-          <button type="button" class="btn-ghost btn-sm" data-attach-clear>移除</button>
+          <span class="chat-attach-tip">已选图片</span>
+          <div class="chat-attach-list"></div>
+          <button type="button" class="btn-ghost btn-sm" data-attach-clear>清空</button>
         </div>
         <div class="chat-compose-row">
           <button type="button" class="btn-attach" data-attach title="从资源管理器选择图片">
@@ -198,7 +199,7 @@
                     placeholder="输入您的问题……（Enter 发送，Shift+Enter 换行）"></textarea>
           <button type="button" class="btn-primary btn-send" data-send>发送</button>
         </div>
-        <input type="file" accept="image/*" hidden id="chat-file">
+        <input type="file" accept="image/*" multiple hidden id="chat-file">
       </div>
     </div>
   </section>
