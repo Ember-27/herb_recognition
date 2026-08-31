@@ -636,7 +636,8 @@ async function apiRemoveFav(fid) {
     var resp = await fetch("/favorites?fid=" + encodeURIComponent(fid), { method: "DELETE" });
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     await refreshFavCount();
-    if (!$("#favDrawer").hidden) renderFavList();
+    renderFavList();
+    toast("已移除收藏");
   } catch (e) {
     toast("删除失败：" + e.message);
   }
@@ -730,11 +731,10 @@ function renderFavList() {
     del.textContent = "✕";
     del.title = "移除收藏";
     del.addEventListener("click", function (e) {
+      e.preventDefault();
       e.stopPropagation();
-      apiRemoveFav(it.fid, favTab);
-      card.remove();
-      var left = $$(".fav-card", list);
-      if (!left.length) { empty.hidden = false; }
+      if (!it.fid) { toast("该收藏缺少标识，无法删除"); return; }
+      apiRemoveFav(it.fid);
     });
     card.appendChild(del);
     list.appendChild(card);
