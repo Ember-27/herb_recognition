@@ -1562,11 +1562,15 @@ var graphData = { nodes: [], links: [] };
 var graphNodes = [], graphLinks = [], graphMeta = {};
 var graphSelected = null, graphHl = new Set();
 var graphZoom = 1, graphPanX = 0, graphPanY = 0;
+var graphPulse = 0;                  // 聚焦节点光环脉动计时
+var GRAPH_FOCUS_COLOR = "#D4A017";  // 聚焦药材金色
+var graphViewLock = false;           // 视图锁定：焦点节点钉在屏幕正中
 var graphN = 0, graphRep = 16000;
 
 function graphReset() {
   graphSelected = null; graphHl.clear();
   graphZoom = 1; graphPanX = 0; graphPanY = 0;
+  graphPulse = 0; graphViewLock = false;
 }
 
 function graphBuild() {
@@ -1592,14 +1596,29 @@ function graphBuild() {
   graphN = graphNodes.length;
   graphRep = graphN > 120 ? 26000 : 16000;
 
-  // 确定性初始布局：圆环
+  // 确定性初始布局：圆环；聚焦药材固定在正中央，其一阶邻居放内圈
   var R = Math.sqrt(graphN) * 17 + 40;
   var W = 1040, H = 620;
+  var focusNode = null;
+  graphNodes.forEach(function (n) { if (n.focus) focusNode = n; });
+  var focusId = focusNode ? focusNode.id : null;
+  var focusNeighbors = new Set();
+  if (focusId) {
+    graphLinks.forEach(function (l) {
+      if (l.source === focusId) focusNeighbors.add(l.target);
+      if (l.target === focusId) focusNeighbors.add(l.source);
+    });
+  }
   graphNodes.forEach(function (n, i) {
+    var ringR = (focusId && n.id !== focusId && focusNeighbors.has(n.id)) ? R * 0.55 : R;
     var ang = (i / Math.max(graphN, 1)) * Math.PI * 2;
-    n.x = W / 2 + R * Math.cos(ang);
-    n.y = H / 2 + R * Math.sin(ang);
+    n.x = W / 2 + ringR * Math.cos(ang);
+    n.y = H / 2 + ringR * Math.sin(ang);
   });
+  if (focusNode) {
+    focusNode.x = W / 2; focusNode.y = H / 2;
+    focusNode.fixed = true;
+  }
 }
 
 function graphHerbColor(n) {
@@ -1647,15 +1666,28 @@ function graphSimulate() {
     if (a.x < -200) a.x = -200; if (a.x > W + 200) a.x = W + 200;
     if (a.y < -200) a.y = -200; if (a.y > H + 200) a.y = H + 200;
   }
+  // 视图锁定：无论其他节点如何乱动，焦点节点始终钉在画布正中央，pan 归零
+  if (graphViewLock) {
+    graphPanX = 0; graphPanY = 0;
+    for (i = 0; i < graphN; i++) {
+      a = graphNodes[i];
+      if (a.focus) { a.x = W / 2; a.y = H / 2; a.vx = 0; a.vy = 0; a.fixed = true; }
+    }
+  }
 }
 
 function graphUpdateHighlight() {
   graphHl.clear();
-  if (graphSelected) {
-    graphHl.add(graphSelected.id);
+  var key = graphSelected || null;
+  if (!key) {
+    // 无选中时：若存在聚焦节点，默认高亮它及其一阶邻居，降低无关节点干扰
+    graphNodes.forEach(function (n) { if (n.focus) key = n; });
+  }
+  if (key) {
+    graphHl.add(key.id);
     graphLinks.forEach(function (l) {
-      if (l.source === graphSelected.id) graphHl.add(l.target);
-      if (l.target === graphSelected.id) graphHl.add(l.source);
+      if (l.source === key.id) graphHl.add(l.target);
+      if (l.target === key.id) graphHl.add(l.source);
     });
   }
 }
@@ -1706,13 +1738,57 @@ function graphDraw() {
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
         ctx.fillText("⚠", n.x + r + 5, n.y - r - 2);
       }
+      if (n.focus) {
+        graphPulse += 0.11;                       // 闪动计时（更快、更明显）
+        var breathe = (Math.sin(graphPulse) + 1) / 2;   // 0~1 呼吸
+        // 外层呼吸光环
+        var haloR = r + 10 + breathe * 12;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, haloR, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(212,160,23," + (0.15 + (1 - breathe) * 0.55).toFixed(2) + ")";
+        ctx.lineWidth = 2 + breathe * 1.5;
+        ctx.stroke();
+        // 内层快速闪动光环
+        var haloR2 = r + 6 + Math.sin(graphPulse * 1.7) * 3;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, haloR2, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,221,120," + (0.45 + Math.abs(Math.sin(graphPulse * 1.7)) * 0.4).toFixed(2) + ")";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        // 节点本体径向外发光
+        var glow = ctx.createRadialGradient(n.x, n.y, r * 0.4, n.x, n.y, r + 14);
+        glow.addColorStop(0, "rgba(255,238,180,0.55)");
+        glow.addColorStop(1, "rgba(212,160,23,0)");
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, r + 14, 0, Math.PI * 2);
+        ctx.fillStyle = glow;
+        ctx.fill();
+      }
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = graphHerbColor(n);
+      ctx.fillStyle = n.focus ? GRAPH_FOCUS_COLOR : graphHerbColor(n);
       ctx.fill();
-      ctx.lineWidth = n.focus ? 3 : 1.5;
-      ctx.strokeStyle = n.focus ? "#1A1915" : "rgba(0,0,0,0.35)";
+      ctx.lineWidth = n.focus ? 3.5 : 1.5;
+      ctx.strokeStyle = n.focus ? "#8A5A00" : "rgba(0,0,0,0.35)";
       ctx.stroke();
+      if (n.focus) {                              // 顶部"当前药材"标签牌
+        ctx.fillStyle = "rgba(38,36,31,0.92)";
+        var tw = 82, th = 22;
+        ctx.beginPath();
+        ctx.roundRect ? ctx.roundRect(n.x - tw / 2, n.y - r - th - 14, tw, th, 6)
+                      : ctx.rect(n.x - tw / 2, n.y - r - th - 14, tw, th);
+        ctx.fill();
+        ctx.beginPath();                          // 小三角指向节点
+        ctx.moveTo(n.x - 5, n.y - r - 14);
+        ctx.lineTo(n.x + 5, n.y - r - 14);
+        ctx.lineTo(n.x, n.y - r - 8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.fillStyle = "#FFFDF8";
+        ctx.font = "bold 11px 'Microsoft YaHei', sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText("🎯 当前药材", n.x, n.y - r - th - 14 + th / 2 + 1);
+      }
       if (graphSelected && graphSelected.id === n.id) {
         ctx.beginPath();
         ctx.arc(n.x, n.y, r + 5, 0, Math.PI * 2);
@@ -1836,12 +1912,16 @@ function graphInitEvents() {
   canvas.addEventListener("mousedown", function (e) {
     var p = graphCanvasToWorld(e);
     var hit = graphHitTest(p);
+    if (hit && graphViewLock && hit.focus) {
+      // 锁定态：焦点节点钉死在中心，不参与拖动
+      return;
+    }
     if (hit) {
       draggingNode = hit;
       hit.fixed = true;
       hit.x = p.x; hit.y = p.y;
       canvas.classList.add("dragging");
-    } else {
+    } else if (!graphViewLock) {
       panning = true;
       lastX = e.clientX; lastY = e.clientY;
       canvas.classList.add("dragging");
@@ -1857,7 +1937,7 @@ function graphInitEvents() {
     var p = graphCanvasToWorld(e);
     if (draggingNode) {
       draggingNode.x = p.x; draggingNode.y = p.y;
-    } else if (panning) {
+    } else if (panning && !graphViewLock) {
       graphPanX += e.clientX - lastX;
       graphPanY += e.clientY - lastY;
       lastX = e.clientX; lastY = e.clientY;
@@ -1935,6 +2015,11 @@ async function loadGraph(focus) {
     graphBuild();
     graphBuildLegend();
     graphUpdateHighlight();
+    // 聚焦模式：锁定视图（焦点钉屏幕正中）+ 自动放大视口
+    if (graphNodes.some(function (n) { return n.focus; })) {
+      graphViewLock = true;
+      graphZoom = 1.15;
+    }
     if (!window._graphRaf) {
       graphInitEvents();
       window._graphRaf = true;
