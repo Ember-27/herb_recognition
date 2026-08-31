@@ -29,91 +29,110 @@
 
 <main class="tcm-main">
 
-  <!-- ======= 模块 1：图片识别（药材档案大卡） ======= -->
-  <section id="recognize" class="module active" role="tabpanel">
+  <!-- ======= 模块 1：图片识别（左图右档 · 工作台双栏） ======= -->
+  <section id="recognize" class="module module-recognize active" role="tabpanel">
     <div class="module-head">
       <h2>图片识别</h2>
       <p class="module-desc">上传药材图片，AI 给出 Top-5 识别结果与药性、配伍等完整档案。</p>
     </div>
 
-    <div class="uploader" data-uploader="recognize">
-      <input type="file" accept="image/*" hidden data-file-input>
-      <div class="uploader-drop" data-drop-zone>
-        <div class="uploader-icon" aria-hidden="true">🖼</div>
-        <div class="uploader-text">
-          <b>拖拽图片到此处</b>，或 <u data-click-hint>点击选择</u> · 支持 <u>Ctrl+V</u> 粘贴截图
-        </div>
-        <div class="uploader-tip">示例：枸杞 / 黄芪 / 金银花 / 陈皮 等中草药照片</div>
-      </div>
-      <div class="uploader-preview" hidden>
-        <div class="preview-stage">
-          <img id="recognize-preview-img" alt="">
-          <!-- 框选遮罩层：拖拽画矩形选择识别区域 -->
-          <div class="crop-overlay" id="crop-overlay" hidden>
-            <div class="crop-rect" id="crop-rect"></div>
-            <div class="crop-shade crop-shade-t"></div>
-            <div class="crop-shade crop-shade-b"></div>
-            <div class="crop-shade crop-shade-l"></div>
-            <div class="crop-shade crop-shade-r"></div>
+    <!-- 双栏工作台：左=上传+预览，右=识别档案 -->
+    <div class="rec-workbench">
+      <aside class="rec-pane rec-pane-left">
+        <div class="uploader" data-uploader="recognize">
+          <input type="file" accept="image/*" hidden data-file-input>
+          <div class="uploader-drop" data-drop-zone>
+            <div class="uploader-icon" aria-hidden="true">🖼</div>
+            <div class="uploader-text">
+              <b>拖拽图片到此处</b>，或 <u data-click-hint>点击选择</u> · 支持 <u>Ctrl+V</u> 粘贴截图
+            </div>
+            <div class="uploader-tip">示例：枸杞 / 黄芪 / 金银花 / 陈皮 等中草药照片</div>
           </div>
+          <div class="uploader-preview" hidden>
+            <div class="preview-stage">
+              <img id="recognize-preview-img" alt="">
+              <!-- 框选遮罩层：拖拽画矩形选择识别区域 -->
+              <div class="crop-overlay" id="crop-overlay" hidden>
+                <div class="crop-rect" id="crop-rect"></div>
+                <div class="crop-shade crop-shade-t"></div>
+                <div class="crop-shade crop-shade-b"></div>
+                <div class="crop-shade crop-shade-l"></div>
+                <div class="crop-shade crop-shade-r"></div>
+              </div>
+            </div>
+            <button type="button" class="btn-ghost btn-sm" data-clear>重新上传</button>
+          </div>
+          <!-- 框选操作按钮行（仅在已上传图片后出现） -->
+          <div class="crop-actions" id="crop-actions" hidden>
+            <button type="button" class="btn-ghost btn-sm" id="btn-crop" data-crop>框选区域</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-crop-confirm" data-crop-confirm hidden>添加选区</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-crop-cancel" data-crop-cancel hidden>取消框选</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-crop-clear" hidden>清除选框</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-crop-reset" data-clear hidden>清除图片</button>
+          </div>
+          <!-- 已确认选区列表（可逐个删除） -->
+          <div class="crop-list" id="crop-list"></div>
         </div>
-        <button type="button" class="btn-ghost btn-sm" data-clear>重新上传</button>
+
+        <div class="field-row">
+          <label class="field-label" for="recognize-text">补充描述</label>
+          <input id="recognize-text" class="text-input" type="text"
+                 placeholder="叶片椭圆、表面有细毛、味甘" maxlength="100">
+        </div>
+
+        <div class="action-row">
+          <button type="button" class="btn-primary" data-identify>开始识别</button>
+        </div>
+        <p class="action-hint rec-hint">识别需加载本地模型，首次调用较慢，请耐心等待</p>
+      </aside>
+
+      <div class="rec-pane rec-pane-right">
+        <div class="rec-archive-head">
+          <span class="rec-archive-title">识别档案</span>
+          <span class="rec-archive-sub">Top-5 结果 · 药性 · 配伍</span>
+        </div>
+        <div class="module-result rec-archive-body" id="recognize-result" hidden>
+          <div class="result-loading" hidden><span class="spinner"></span> 正在识别中……</div>
+          <div id="recognize-cards"></div>
+        </div>
+        <div class="rec-archive-empty" id="recognize-empty">
+          <div class="rec-empty-icon" aria-hidden="true">🪪</div>
+          <p>上传图片并点击「开始识别」<br>药材档案将在此处展开</p>
+        </div>
       </div>
-      <!-- 框选操作按钮行（仅在已上传图片后出现） -->
-      <div class="crop-actions" id="crop-actions" hidden>
-        <button type="button" class="btn-ghost btn-sm" id="btn-crop" data-crop>框选区域</button>
-        <button type="button" class="btn-ghost btn-sm" id="btn-crop-confirm" data-crop-confirm hidden>添加选区</button>
-        <button type="button" class="btn-ghost btn-sm" id="btn-crop-cancel" data-crop-cancel hidden>取消框选</button>
-        <button type="button" class="btn-ghost btn-sm" id="btn-crop-clear" hidden>清除选框</button>
-        <button type="button" class="btn-ghost btn-sm" id="btn-crop-reset" data-clear hidden>清除图片</button>
-      </div>
-      <!-- 已确认选区列表（可逐个删除） -->
-      <div class="crop-list" id="crop-list"></div>
-    </div>
-
-    <div class="field-row">
-      <label class="field-label" for="recognize-text">补充描述（可选）</label>
-      <input id="recognize-text" class="text-input" type="text"
-             placeholder="例如：叶片椭圆、表面有细毛、味甘" maxlength="100">
-    </div>
-
-    <div class="action-row">
-      <button type="button" class="btn-primary" data-identify>开始识别</button>
-      <span class="action-hint">识别需加载本地模型，首次调用较慢，请耐心等待</span>
-    </div>
-
-    <div class="module-result" id="recognize-result" hidden>
-      <div class="result-loading" hidden><span class="spinner"></span> 正在识别中……</div>
-      <div id="recognize-cards"></div>
     </div>
   </section>
 
-  <!-- ======= 模块 2：特性检索（卡片网格） ======= -->
-  <section id="search" class="module" role="tabpanel">
+  <!-- ======= 模块 2：特性检索（检索台 · 上查询下结果列） ======= -->
+  <section id="search" class="module module-search" role="tabpanel">
     <div class="module-head">
       <h2>特性检索</h2>
       <p class="module-desc">按「性味 + 归经 + 功效」描述检索药材，命中条件越多的排在前面。</p>
     </div>
 
-    <div class="field-row">
-      <label class="field-label" for="search-text">检索条件</label>
-      <input id="search-text" class="text-input" type="text"
-             placeholder="例如：性味甘平 归肺经 补气"
-             list="search-examples">
-      <datalist id="search-examples">
-        <option value="性味甘 归肝经 清肝明目"></option>
-        <option value="性味苦寒 清热解毒"></option>
-        <option value="性温 补血"></option>
-        <option value="味甘 归肾经 固精缩尿"></option>
-      </datalist>
+    <div class="search-console">
+      <div class="search-console-bar">
+        <label class="field-label" for="search-text">检索条件</label>
+        <input id="search-text" class="text-input" type="text"
+               placeholder="例如：性味甘平 归肺经 补气"
+               list="search-examples">
+        <datalist id="search-examples">
+          <option value="性味甘 归肝经 清肝明目"></option>
+          <option value="性味苦寒 清热解毒"></option>
+          <option value="性温 补血"></option>
+          <option value="味甘 归肾经 固精缩尿"></option>
+        </datalist>
+        <button type="button" class="btn-primary" data-search>检索</button>
+      </div>
+      <div class="search-chips" id="search-chips">
+        <span class="search-chip-eg" data-eg="性味甘 归肝经 清肝明目">清肝明目</span>
+        <span class="search-chip-eg" data-eg="性味苦寒 清热解毒">清热解毒</span>
+        <span class="search-chip-eg" data-eg="性温 补血">温里补血</span>
+        <span class="search-chip-eg" data-eg="味甘 归肾经 固精缩尿">固精缩尿</span>
+      </div>
     </div>
 
-    <div class="action-row">
-      <button type="button" class="btn-primary" data-search>检索</button>
-      <span class="action-hint">支持「甘/苦/寒/温」等性味、「归肺经」等归经、以及功效关键词</span>
-    </div>
-
-    <div class="module-result" id="search-result" hidden>
+    <div class="module-result search-result-list" id="search-result" hidden>
       <div class="result-loading" hidden><span class="spinner"></span> 正在检索……</div>
       <div class="search-summary" id="search-summary" hidden></div>
       <div class="search-section" id="search-full" hidden></div>
@@ -121,8 +140,8 @@
     </div>
   </section>
 
-  <!-- ======= 模块 3：Grad-CAM（叠加图 + 滑块） ======= -->
-  <section id="gradcam" class="module" role="tabpanel">
+  <!-- ======= 模块 3：Grad-CAM（左图右解读 · 对照工作台） ======= -->
+  <section id="gradcam" class="module module-gradcam" role="tabpanel">
     <div class="module-head">
       <h2>Grad-CAM 关注区域</h2>
       <p class="module-desc">热力图展示模型判定药材类别时主要依据的图像部位，拖动滑块调节热力强度。</p>
@@ -152,54 +171,75 @@
       <div class="result-loading" hidden><span class="spinner"></span> 正在生成热力图……</div>
 
       <div class="gradcam-stage" hidden id="gradcam-stage">
-        <div class="gradcam-canvas-wrap">
-          <canvas id="gradcam-canvas" width="448" height="448"></canvas>
+        <div class="gradcam-left">
+          <div class="gradcam-canvas-wrap">
+            <canvas id="gradcam-canvas" width="448" height="448"></canvas>
+          </div>
+          <div class="gradcam-controls">
+            <label for="gradcam-alpha">热力强度</label>
+            <input type="range" id="gradcam-alpha" min="0" max="100" value="45">
+            <span class="gradcam-alpha-val" id="gradcam-alpha-val">45%</span>
+          </div>
         </div>
-        <div class="gradcam-controls">
-          <label for="gradcam-alpha">热力强度</label>
-          <input type="range" id="gradcam-alpha" min="0" max="100" value="45">
-          <span class="gradcam-alpha-val" id="gradcam-alpha-val">45%</span>
+        <div class="gradcam-right">
+          <div class="gradcam-readout-head">模型关注解读</div>
+          <div class="gradcam-info" id="gradcam-info"></div>
         </div>
-        <div class="gradcam-info" id="gradcam-info"></div>
       </div>
     </div>
   </section>
 
-  <!-- ======= 模块 4：AI 对话（聊天室） ======= -->
-  <section id="chat" class="module" role="tabpanel">
+  <!-- ======= 模块 4：AI 对话（左快捷竖栏 + 右对话室） ======= -->
+  <section id="chat" class="module module-chat" role="tabpanel">
     <div class="module-head">
       <h2>AI 对话</h2>
       <p class="module-desc">与 AI 讨论药材辨识与药性知识，可上传图片提问，回答附知识库来源。</p>
     </div>
 
-    <div class="chatbox" data-chat-drop>
-      <div class="chat-history" id="chat-history">
-        <div class="chat-welcome">
-          <div class="chat-welcome-title">👋 您好，我是本草识鉴助手</div>
-          <div class="chat-welcome-text">
-            可以这样问我：<br>
-            · 「帮我看看这张图片是什么药材」<br>
-            · 「黄芪和人参有什么区别？」<br>
-            · 「性味甘平、归肺经的药材有哪些？」
+    <div class="chat-layout">
+      <aside class="chat-rail">
+        <div class="chat-rail-title">常问</div>
+        <div class="chat-rail-list">
+          <button type="button" class="chat-quick" data-quick="黄芪和人参有什么区别？">黄芪 vs 人参</button>
+          <button type="button" class="chat-quick" data-quick="性味甘平、归肺经的药材有哪些？">甘平归肺经</button>
+          <button type="button" class="chat-quick" data-quick="孕妇忌用哪些药材？">孕妇禁忌</button>
+          <button type="button" class="chat-quick" data-quick="枸杞怎么泡水喝最好？">枸杞泡法</button>
+          <button type="button" class="chat-quick" data-quick="当归和川芎配伍有什么讲究？">当归配伍</button>
+        </div>
+        <div class="chat-rail-foot">可上传图片一并提问</div>
+      </aside>
+
+      <div class="chat-main">
+        <div class="chatbox" data-chat-drop>
+          <div class="chat-history" id="chat-history">
+            <div class="chat-welcome">
+              <div class="chat-welcome-title">👋 您好，我是本草识鉴助手</div>
+              <div class="chat-welcome-text">
+                可以这样问我：<br>
+                · 「帮我看看这张图片是什么药材」<br>
+                · 「黄芪和人参有什么区别？」<br>
+                · 「性味甘平、归肺经的药材有哪些？」
+              </div>
+            </div>
+          </div>
+
+          <div class="chat-compose">
+            <div class="chat-attach" id="chat-attach" hidden>
+              <span class="chat-attach-tip">已选图片</span>
+              <div class="chat-attach-list"></div>
+              <button type="button" class="btn-ghost btn-sm" data-attach-clear>清空</button>
+            </div>
+            <div class="chat-compose-row">
+              <button type="button" class="btn-attach" data-attach title="从资源管理器选择图片">
+                <img src="images/_02/icons8-打开文件夹-48.png" alt="选择图片">
+              </button>
+              <textarea id="chat-input" class="chat-input" rows="2"
+                        placeholder="输入您的问题……（Enter 发送，Shift+Enter 换行）"></textarea>
+              <button type="button" class="btn-primary btn-send" data-send>发送</button>
+            </div>
+            <input type="file" accept="image/*" multiple hidden id="chat-file">
           </div>
         </div>
-      </div>
-
-      <div class="chat-compose">
-        <div class="chat-attach" id="chat-attach" hidden>
-          <span class="chat-attach-tip">已选图片</span>
-          <div class="chat-attach-list"></div>
-          <button type="button" class="btn-ghost btn-sm" data-attach-clear>清空</button>
-        </div>
-        <div class="chat-compose-row">
-          <button type="button" class="btn-attach" data-attach title="从资源管理器选择图片">
-            <img src="images/_02/icons8-打开文件夹-48.png" alt="选择图片">
-          </button>
-          <textarea id="chat-input" class="chat-input" rows="2"
-                    placeholder="输入您的问题……（Enter 发送，Shift+Enter 换行）"></textarea>
-          <button type="button" class="btn-primary btn-send" data-send>发送</button>
-        </div>
-        <input type="file" accept="image/*" multiple hidden id="chat-file">
       </div>
     </div>
   </section>

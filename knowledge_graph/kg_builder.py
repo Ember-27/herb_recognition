@@ -12,7 +12,7 @@
 
 如需更大规模/持久化，可将 use_neo4j 置为 true 并改用 py2neo（见 TODO）。
 """
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import os
 import re
 import pandas as pd
@@ -585,16 +585,32 @@ class HerbKnowledgeGraph:
                 if not self.graph.nodes[n].get("node_type")]
 
     # ----------------------- 可视化导出 API -----------------------
-    def export_graph_json(self, focus: Optional[str] = None,
+    def export_graph_json(self, focus: Optional[Union[str, List[str]]] = None,
                           include_meta: bool = True) -> Dict:
         """导出图谱为 JSON（供前端可视化，纯前端力导向渲染）。
 
         参数:
-          focus       : 聚焦药材名，仅导出该药与其一阶邻居；None 表示全图
+          focus       : 聚焦药材名（单味或多味）；多味时传入列表，导出各药及其
+                        一阶邻居的并集子图；None 表示全图
           include_meta: 聚焦模式下是否包含 功效分类/归经 节点（默认包含）
         """
-        focus = _normalize_name(focus) if focus else None
-        if focus is not None and focus not in self.graph:
+        if focus is None:
+            focus_list = []
+        elif isinstance(focus, str):
+            focus_list = [focus]
+        else:
+            focus_list = list(focus)
+
+        focus_set = set()
+        for f in focus_list:
+            fn = _normalize_name(f) if f else None
+            if fn and fn in self.graph:
+                focus_set.add(fn)
+        if len(focus_set) > 1:
+            focus = list(focus_set)  # 多味聚焦
+        elif len(focus_set) == 1:
+            focus = next(iter(focus_set))
+        else:
             focus = None
 
         nodes, herb_ids = [], set()
@@ -608,7 +624,7 @@ class HerbKnowledgeGraph:
             nodes.append({
                 "id": n,
                 "type": "herb",
-                "focus": (n == focus),
+                "focus": (n in focus_set),
                 "property": nd.get("property", ""),
                 "meridian": nd.get("meridian", ""),
                 "function": nd.get("function", ""),
@@ -628,31 +644,34 @@ class HerbKnowledgeGraph:
                     continue
                 add_herb(n)
         else:
-            add_herb(focus)
-            for n in self.graph.neighbors(focus):
-                nd = self.graph.nodes[n]
-                if nd.get("node_type"):
-                    if include_meta:
-                        extra = {}
-                        # 方剂节点附带详情，供前端详情面板展示
-                        if nd["node_type"] == "formula":
-                            f = self.formulas.get(n, {})
-                            extra = {
-                                "category": f.get("category", ""),
-                                "source": f.get("source", ""),
-                                "composition_text": f.get("composition_text", ""),
-                                "effects": f.get("effects", ""),
-                                "indications": f.get("indications", ""),
-                                "usage": f.get("usage", ""),
-                                "warning": f.get("warning", ""),
-                            }
-                        nodes.append({"id": n, "type": nd["node_type"],
-                                      "toxicity": "未知", **extra})
-                else:
+            # focus 可能是单味（str）或多味（list），统一处理
+            focus_items = focus if isinstance(focus, list) else [focus]
+            for fi in focus_items:
+                add_herb(fi)
+                for n in self.graph.neighbors(fi):
+                    nd = self.graph.nodes[n]
+                    if nd.get("node_type"):
+                        if include_meta:
+                            extra = {}
+                            # 方剂节点附带详情，供前端详情面板展示
+                            if nd["node_type"] == "formula":
+                                f = self.formulas.get(n, {})
+                                extra = {
+                                    "category": f.get("category", ""),
+                                    "source": f.get("source", ""),
+                                    "composition_text": f.get("composition_text", ""),
+                                    "effects": f.get("effects", ""),
+                                    "indications": f.get("indications", ""),
+                                    "usage": f.get("usage", ""),
+                                    "warning": f.get("warning", ""),
+                                }
+                            nodes.append({"id": n, "type": nd["node_type"],
+                                          "toxicity": "未知", **extra})
+                    else:
+                        add_herb(n)
+                # 补充同功效分类的相似药（经分类节点相连），增强聚焦子图信息量
+                for n in self.similar_by_function(fi, top_k=6):
                     add_herb(n)
-            # 补充同功效分类的相似药（经分类节点相连），增强聚焦子图信息量
-            for n in self.similar_by_function(focus, top_k=6):
-                add_herb(n)
 
         node_ids = {n["id"] for n in nodes}
         links = []

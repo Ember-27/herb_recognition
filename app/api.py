@@ -26,7 +26,8 @@ if ROOT not in sys.path:
 
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, File, Form, UploadFile, Body
+from typing import List
+from fastapi import FastAPI, File, Form, UploadFile, Body, Query
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -309,18 +310,26 @@ async def explain(image: UploadFile, text: str = Form("")):
 
 
 @app.get("/graph")
-def graph(focus: str = ""):
+def graph(focus: List[str] = Query([])):
     """药材关系图谱：返回力导向图 JSON（nodes + links + 分类配色）。
 
     query 参数:
-      focus  聚焦药材名（可选）；为空则返回全图（节点较多，前端自动适配）
+      focus  聚焦药材名（可重复，如 ?focus=枸杞&focus=黄芪；也可在单个值内用
+             逗号分隔，如 ?focus=枸杞,黄芪）；为空则返回全图（节点较多，前端自动适配）
     """
     demo = get_demo()
-    focus = (focus or "").strip() or None
+    # 兼容「单值逗号分隔」与「重复参数」两种写法，统一展开成列表
+    focus_list = []
+    for f in focus:
+        for part in str(f).split(","):
+            part = part.strip()
+            if part:
+                focus_list.append(part)
+    focus_arg = focus_list if len(focus_list) > 1 else (focus_list[0] if focus_list else None)
     from app.graph_view import _CATEGORY_COLORS
-    data = demo.kg.export_graph_json(focus=focus)
+    data = demo.kg.export_graph_json(focus=focus_arg)
     return {**data, "categoryColors": _CATEGORY_COLORS,
-            "focus": focus}
+            "focus": focus_arg}
 
 
 @app.get("/herbs")

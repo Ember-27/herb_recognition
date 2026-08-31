@@ -256,6 +256,8 @@ function runRecognizeWithImage(imgFile, isCrop) {
   resultBox.hidden = false;
   loading.hidden = false;
   cards.innerHTML = "";
+  var recEmpty = $("#recognize-empty");
+  if (recEmpty) recEmpty.style.display = "none";
   var btn = $("[data-identify]");
   if (btn) btn.disabled = true;
   return postForm("/predict" + (isCrop ? "?crop=1" : ""), (function () {
@@ -551,6 +553,8 @@ async function runRecognizeMulti(crops) {
   resultBox.hidden = false;
   loading.hidden = false;
   cards.innerHTML = "";
+  var recEmpty = $("#recognize-empty");
+  if (recEmpty) recEmpty.style.display = "none";
   if (btn) btn.disabled = true;
   try {
     var files = [];
@@ -1117,9 +1121,9 @@ function renderPredictMulti(data) {
   });
   var gBtn = $("#btn-multi-graph");
   if (gBtn) gBtn.addEventListener("click", function () {
-    // 图谱聚焦当前仅支持单药材，默认聚焦第一味（其余可在图谱搜索框继续）
-    var focus = herbNames[0] || "";
-    $("#graph-focus").value = focus;
+    // 多药联动：全部识别到的药材一并聚焦到图谱
+    var focus = (herbNames.length === 1) ? herbNames[0] : herbNames.slice();
+    $("#graph-focus").value = herbNames.join("、");
     $$(".tab").forEach(function (t) {
       if (t.dataset.tab === "graph") t.click();
     });
@@ -1130,8 +1134,18 @@ function renderPredictMulti(data) {
 }
 
 /* ============================================================
-   模块 2：特性检索 → 卡片网格
+   模块 2：特性检索
    ============================================================ */
+/* 检索示例 chips：点击填入输入框并直接检索 */
+document.querySelectorAll("#search-chips .search-chip-eg").forEach(function (chip) {
+  chip.addEventListener("click", function () {
+    var inp = $("#search-text");
+    if (inp) inp.value = chip.getAttribute("data-eg") || "";
+    var btn = $("[data-search]");
+    if (btn) btn.click();
+  });
+});
+
 $("[data-search]").addEventListener("click", async function () {
   var btn = this;
   var text = $("#search-text").value.trim();
@@ -1476,6 +1490,15 @@ $("#chat-attach").addEventListener("click", function (e) {
   });
 })();
 
+/* 对话快捷提问：点击填入并直接发送 */
+document.querySelectorAll(".chat-quick").forEach(function (q) {
+  q.addEventListener("click", function () {
+    var ta = $("#chat-input");
+    if (ta) ta.value = q.getAttribute("data-quick") || "";
+    sendChat();
+  });
+});
+
 $("[data-send]").addEventListener("click", sendChat);
 $("#chat-input").addEventListener("keydown", function (e) {
   if (e.key === "Enter" && !e.shiftKey) {
@@ -1596,28 +1619,41 @@ function graphBuild() {
   graphN = graphNodes.length;
   graphRep = graphN > 120 ? 26000 : 16000;
 
-  // 确定性初始布局：圆环；聚焦药材固定在正中央，其一阶邻居放内圈
+  // 确定性初始布局：圆环；聚焦药材分布在中心内圈，其一阶邻居放外圈
   var R = Math.sqrt(graphN) * 17 + 40;
   var W = 1040, H = 620;
-  var focusNode = null;
-  graphNodes.forEach(function (n) { if (n.focus) focusNode = n; });
-  var focusId = focusNode ? focusNode.id : null;
+  var focusNodes = graphNodes.filter(function (n) { return n.focus; });
+  var focusIds = focusNodes.map(function (n) { return n.id; });
+  var focusSet = new Set(focusIds);
   var focusNeighbors = new Set();
-  if (focusId) {
+  focusIds.forEach(function (fid) {
     graphLinks.forEach(function (l) {
-      if (l.source === focusId) focusNeighbors.add(l.target);
-      if (l.target === focusId) focusNeighbors.add(l.source);
+      if (l.source === fid) focusNeighbors.add(l.target);
+      if (l.target === fid) focusNeighbors.add(l.source);
     });
-  }
+  });
+  var nf = focusNodes.length;
   graphNodes.forEach(function (n, i) {
-    var ringR = (focusId && n.id !== focusId && focusNeighbors.has(n.id)) ? R * 0.55 : R;
-    var ang = (i / Math.max(graphN, 1)) * Math.PI * 2;
+    var ang, ringR;
+    if (focusSet.has(n.id)) {
+      // 多味聚焦：沿中心内圈均匀排布，避免重叠
+      var idx = focusIds.indexOf(n.id);
+      ang = (idx / Math.max(nf, 1)) * Math.PI * 2 - Math.PI / 2;
+      ringR = nf > 1 ? R * 0.28 : 0;
+    } else if (focusSet.size && focusNeighbors.has(n.id)) {
+      ang = (i / Math.max(graphN, 1)) * Math.PI * 2;
+      ringR = R * 0.55;
+    } else {
+      ang = (i / Math.max(graphN, 1)) * Math.PI * 2;
+      ringR = R;
+    }
     n.x = W / 2 + ringR * Math.cos(ang);
     n.y = H / 2 + ringR * Math.sin(ang);
   });
-  if (focusNode) {
-    focusNode.x = W / 2; focusNode.y = H / 2;
-    focusNode.fixed = true;
+  // 单味聚焦：钉死中心；多味：放开以便力导向自然展开，互不重叠
+  if (nf === 1) {
+    focusNodes[0].x = W / 2; focusNodes[0].y = H / 2;
+    focusNodes[0].fixed = true;
   }
 }
 
@@ -1666,12 +1702,23 @@ function graphSimulate() {
     if (a.x < -200) a.x = -200; if (a.x > W + 200) a.x = W + 200;
     if (a.y < -200) a.y = -200; if (a.y > H + 200) a.y = H + 200;
   }
-  // 视图锁定：无论其他节点如何乱动，焦点节点始终钉在画布正中央，pan 归零
+  // 视图锁定：焦点节点维持在可见区内（不强制全部钉同一点，避免多味重叠）。
+  // 单味聚焦时钉死画布正中；多味聚焦时让各焦点沿初始内圈分布自由展开，
+  // 并将视图平移到所有焦点的质心，保证它们都落在画面中心区域。
   if (graphViewLock) {
-    graphPanX = 0; graphPanY = 0;
+    var foci = [];
     for (i = 0; i < graphN; i++) {
-      a = graphNodes[i];
-      if (a.focus) { a.x = W / 2; a.y = H / 2; a.vx = 0; a.vy = 0; a.fixed = true; }
+      if (graphNodes[i].focus) foci.push(graphNodes[i]);
+    }
+    if (foci.length === 1) {
+      foci[0].x = W / 2; foci[0].y = H / 2; foci[0].vx = 0; foci[0].vy = 0; foci[0].fixed = true;
+      graphPanX = 0; graphPanY = 0;
+    } else if (foci.length > 1) {
+      var cx = 0, cy = 0;
+      foci.forEach(function (f) { cx += f.x; cy += f.y; });
+      cx /= foci.length; cy /= foci.length;
+      graphPanX = W / 2 - cx * graphZoom;
+      graphPanY = H / 2 - cy * graphZoom;
     }
   }
 }
@@ -1680,10 +1727,19 @@ function graphUpdateHighlight() {
   graphHl.clear();
   var key = graphSelected || null;
   if (!key) {
-    // 无选中时：若存在聚焦节点，默认高亮它及其一阶邻居，降低无关节点干扰
-    graphNodes.forEach(function (n) { if (n.focus) key = n; });
-  }
-  if (key) {
+    // 无选中时：若存在聚焦节点，默认高亮「所有聚焦节点」及其一阶邻居，
+    // 让多个聚焦草药同时全亮并闪动（而非只取最后一味）
+    var foci = graphNodes.filter(function (n) { return n.focus; });
+    if (foci.length) {
+      foci.forEach(function (f) {
+        graphHl.add(f.id);
+        graphLinks.forEach(function (l) {
+          if (l.source === f.id) graphHl.add(l.target);
+          if (l.target === f.id) graphHl.add(l.source);
+        });
+      });
+    }
+  } else {
     graphHl.add(key.id);
     graphLinks.forEach(function (l) {
       if (l.source === key.id) graphHl.add(l.target);
@@ -1996,6 +2052,13 @@ function graphBuildLegend() {
 }
 
 function graphLoop() {
+  // A 级 · 降级：用户偏好减少动效时，仅绘制一帧静态图，停止动画循环（防动晕 + 省电）
+  var reduceMotion = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduceMotion) {
+    graphDraw();
+    return;
+  }
   graphSimulate();
   graphDraw();
   requestAnimationFrame(graphLoop);
@@ -2004,7 +2067,16 @@ function graphLoop() {
 async function loadGraph(focus) {
   var canvas = $("#graph-canvas");
   try {
-    var url = "/graph" + (focus ? "?focus=" + encodeURIComponent(focus) : "");
+    var url = "/graph";
+    if (focus) {
+      if (Array.isArray(focus)) {
+        url += "?" + focus.map(function (f) {
+          return "focus=" + encodeURIComponent(f);
+        }).join("&");
+      } else {
+        url += "?focus=" + encodeURIComponent(focus);
+      }
+    }
     var resp = await fetch(url);
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     graphData = await resp.json();
