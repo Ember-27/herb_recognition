@@ -1022,6 +1022,21 @@ function attachHerbThumbs(container) {
         n.insertBefore(img, n.firstChild);
       });
     }).catch(function () { /* 样本图缺失不影响主流程 */ });
+
+  // 点击识别结果卡片 → 跳转到知识图谱并聚焦该药材
+  Array.prototype.forEach.call(nodes, function (n) {
+    var nm = n.getAttribute('data-herb');
+    if (!nm || n.dataset.graphBound) return;
+    n.dataset.graphBound = "1";
+    n.style.cursor = "pointer";
+    n.addEventListener("click", function () {
+      $$(".tab").forEach(function (t) {
+        if (t.dataset.tab === "graph") t.click();
+      });
+      $("#graph-focus").value = nm;
+      loadGraph(nm);
+    });
+  });
 }
 
 /* 多选区批量识别结果：每个选区一张卡 + 跨区配伍分析 + 联动入口 */
@@ -1189,6 +1204,24 @@ function renderSearch(data) {
     return;
   }
 
+  // 按药材名直接检索（支持多味）
+  if (res.name_hit) {
+    summaryEl.hidden = false;
+    var nameList = (res.name_query || []).map(function (n) {
+      return '<span class="hit-chip">' + esc(n) + "</span>";
+    }).join("");
+    summaryEl.innerHTML = "按药材名检索：" + nameList +
+      "（共 " + (res.full ? res.full.length : 0) + " 味）";
+    if (res.full && res.full.length) {
+      fullEl.hidden = false;
+      fullEl.innerHTML = "<h3>检索到药材</h3>" + searchGrid(res.full, "name");
+    } else {
+      fullEl.hidden = true;
+    }
+    partialEl.hidden = true;
+    return;
+  }
+
   // 解析条件摘要
   var parsed = res.parsed || {};
   var condChips = [];
@@ -1228,7 +1261,8 @@ function searchGrid(items, kind) {
       });
     }
     html += '<div class="tcm-card">';
-    html += '<span class="tcm-stamp ' + kind + '">' + (kind === "full" ? "完全匹配" : "部分匹配") + "</span>";
+    html += '<span class="tcm-stamp ' + kind + '">' +
+      (kind === "full" ? "完全匹配" : kind === "partial" ? "部分匹配" : "按名检索") + "</span>";
     html += "<h4>" + esc(cleanName(it.name)) + favStarHerb(cleanName(it.name), it) + "</h4>";
     html += toxBadge(info.toxicity || it.toxicity);
     if (hitChips) html += '<div style="margin-top:4px">' + hitChips + "</div>";
@@ -1702,9 +1736,9 @@ function graphSimulate() {
     if (a.x < -200) a.x = -200; if (a.x > W + 200) a.x = W + 200;
     if (a.y < -200) a.y = -200; if (a.y > H + 200) a.y = H + 200;
   }
-  // 视图锁定：焦点节点维持在可见区内（不强制全部钉同一点，避免多味重叠）。
-  // 单味聚焦时钉死画布正中；多味聚焦时让各焦点沿初始内圈分布自由展开，
-  // 并将视图平移到所有焦点的质心，保证它们都落在画面中心区域。
+  // 视图锁定初始化：单味聚焦把焦点钉在画布正中；多味聚焦让各焦点沿初始
+  // 内圈分布自由展开，并把视图平移到所有焦点的质心（仅初始化做一次，
+  // 之后不再每帧覆盖 pan，允许用户自由拖拽浏览）。
   if (graphViewLock) {
     var foci = [];
     for (i = 0; i < graphN; i++) {
@@ -1977,7 +2011,8 @@ function graphInitEvents() {
       hit.fixed = true;
       hit.x = p.x; hit.y = p.y;
       canvas.classList.add("dragging");
-    } else if (!graphViewLock) {
+    } else {
+      // 空白处拖拽 = 平移视图（锁定态也允许，便于浏览整图）
       panning = true;
       lastX = e.clientX; lastY = e.clientY;
       canvas.classList.add("dragging");
@@ -1993,7 +2028,7 @@ function graphInitEvents() {
     var p = graphCanvasToWorld(e);
     if (draggingNode) {
       draggingNode.x = p.x; draggingNode.y = p.y;
-    } else if (panning && !graphViewLock) {
+    } else if (panning) {
       graphPanX += e.clientX - lastX;
       graphPanY += e.clientY - lastY;
       lastX = e.clientX; lastY = e.clientY;
@@ -2108,9 +2143,12 @@ async function loadGraph(focus) {
 
 /* 图谱工具栏 */
 $("[data-graph-load]").addEventListener("click", function () {
-  var name = $("#graph-focus").value.trim();
-  if (!name) { alert("请输入药材名。"); return; }
-  loadGraph(name);
+  var raw = $("#graph-focus").value.trim();
+  if (!raw) { alert("请输入药材名。"); return; }
+  // 支持多药材：逗号/顿号/空格/分号分隔，传入数组以「多味聚焦」展示
+  var names = raw.split(/[，,、;；\s]+/).map(function (s) { return s.trim(); })
+    .filter(function (s) { return s; });
+  loadGraph(names.length === 1 ? names[0] : names);
 });
 $("[data-graph-all]").addEventListener("click", function () {
   $("#graph-focus").value = "";

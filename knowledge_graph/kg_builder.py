@@ -681,9 +681,50 @@ class HerbKnowledgeGraph:
             links.append({"source": u, "target": v, "relation": d.get("relation")})
         return {"nodes": nodes, "links": links}
 
+    def _match_names_in_text(self, text: str):
+        """从自由文本中识别多个已知药材名，支持「逗号/顿号/空格/分号」分隔。
+
+        返回: (items, query_names)
+          items  : 与 search_herbs_by_text 结构一致的 full 列表项
+          query_names: 归一化后命中的药材名列表（保持输入顺序、去重）
+        """
+        if not text or not text.strip():
+            return [], []
+        raw_parts = [p.strip() for p in
+                     re.split(r"[，,、;；\s]+", text.strip()) if p.strip()]
+        # 同时尝试整句直接匹配（未切分时也识别，如「枸杞子」）
+        candidates = list(dict.fromkeys(raw_parts + [text.strip()]))
+
+        names = []
+        for c in candidates:
+            n = _normalize_name(c)
+            if n in self.graph and not self.graph.nodes[n].get("node_type") \
+                    and n not in names:
+                names.append(n)
+
+        items = []
+        for n in names:
+            info = self.get_info(n)
+            if info is None:
+                continue
+            items.append({
+                "name": n,
+                "score": 1.0,
+                "dims": {"flavor": True, "meridian": True, "function": True},
+                "hits": {},
+                "info": info,
+                "name_hit": True,
+            })
+        return items, names
+
     # ----------------------- 特性检索 API -----------------------
     def search_herbs_by_text(self, text: str, top_k: int = 25) -> Dict:
         """根据特性描述检索所有符合的中草药（完全匹配优先，部分匹配在后）。
+
+        两类用法：
+          1) 按药材名检索：输入含已知药材名（如「枸杞 黄芪」「枸杞、黄芪、
+             枸杞子」），直接返回这些药材档案（支持同时查多个），标 name_hit。
+          2) 按特性检索：输入性味/归经/功效描述，逐味打分匹配。
 
         解析输入文本中的 性味/归经/功效 三类条件，遍历图谱逐味打分；
         全部维度命中的药材归入 full，命中部分维度的归入 partial。
@@ -694,6 +735,21 @@ class HerbKnowledgeGraph:
           full: 完全匹配列表, partial: 部分匹配列表, hint: 提示文本
         }
         """
+        # —— 按药材名检索（支持多味，逗号/顿号/空格/分号分隔）——
+        name_items, name_query = self._match_names_in_text(text)
+        if name_items:
+            # 同时若也解析到性味/归经/功效条件，仍按名返回（特性条件作为附加提示）
+            return {
+                "parsed": {"flavor": [], "nature": [], "meridian": [],
+                           "function_kws": [], "function_segs": []},
+                "total_conditions": 0,
+                "full": name_items,
+                "partial": [],
+                "name_hit": True,
+                "name_query": name_query,
+                "hint": None,
+            }
+
         parsed = _parse_herb_query(text)
         flavor_nature = parsed["flavor"] + parsed["nature"]
         func_cands = list(dict.fromkeys(parsed["function_kws"] + parsed["function_segs"]))
