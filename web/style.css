@@ -1413,6 +1413,84 @@ select:focus-visible,
 }
 .fav-mini-btn:hover { color: var(--vermilion); border-color: var(--vermilion); }
 
+/* ===== AI 对话导出 ===== */
+.chat-toolbar { display: flex; justify-content: flex-end; padding: 8px 4px 4px; }
+.btn-ghost {
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+  color: var(--ink-soft);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn-ghost:hover { color: var(--vermilion); border-color: var(--vermilion); }
+
+.export-chat {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(38, 36, 31, 0.42);
+  display: flex; align-items: center; justify-content: center;
+}
+.export-chat[hidden] { display: none !important; }
+.export-chat-card {
+  width: min(560px, 92vw); max-height: 86vh; overflow: hidden;
+  background: var(--card); border-radius: 14px;
+  display: flex; flex-direction: column;
+  box-shadow: 0 20px 60px rgba(38, 36, 31, 0.28);
+}
+.export-chat-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid var(--line);
+}
+.export-chat-title { font-size: 16px; font-weight: 600; color: var(--ink); }
+.export-chat-close {
+  border: none; background: none; font-size: 22px; line-height: 1;
+  color: var(--ink-soft); cursor: pointer;
+}
+.export-chat-close:hover { color: var(--vermilion); }
+.export-chat-body { padding: 16px 18px; overflow-y: auto; }
+.export-chat-hint { font-size: 13px; color: var(--ink-soft); margin-bottom: 10px; }
+.export-chat-actions-top { display: flex; gap: 8px; margin-bottom: 8px; }
+.export-chat-list { display: flex; flex-direction: column; gap: 6px; max-height: 38vh; overflow-y: auto; }
+.export-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 8px 10px; border: 1px solid var(--line);
+  border-radius: 8px; cursor: pointer; font-size: 13px;
+  background: var(--paper);
+}
+.export-item:hover { border-color: var(--vermilion); }
+.export-item-user { border-left: 3px solid #5E8C5A; }
+.export-item-assistant { border-left: 3px solid var(--vermilion); }
+.export-cb { margin-top: 3px; }
+.export-item-text { color: var(--ink); line-height: 1.5; }
+.export-chat-format { margin-top: 16px; border-top: 1px dashed var(--line); padding-top: 14px; }
+.export-format-label { font-size: 13px; color: var(--ink-soft); margin-bottom: 8px; }
+.export-format-opt {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; color: var(--ink); padding: 6px 0; cursor: pointer;
+}
+.export-chat-foot {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding: 12px 18px; border-top: 1px solid var(--line);
+}
+
+/* 打印（导出 PDF 时）专用容器，仅打印本区域 */
+.export-print-area { padding: 24px 32px; color: #000; background: #fff; }
+.ep-title { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+.ep-meta { font-size: 12px; color: #555; margin-bottom: 16px; }
+.ep-msg { margin-bottom: 14px; padding: 10px 14px; border-radius: 8px; border: 1px solid #ddd; }
+.ep-user { background: #eef3ea; }
+.ep-assistant { background: #fff; }
+.ep-role { font-size: 12px; font-weight: 600; color: #8a6d3b; margin-bottom: 4px; }
+.ep-content { font-size: 14px; line-height: 1.6; }
+.ep-content .md-table { border-collapse: collapse; width: 100%; margin: 6px 0; }
+.ep-content .md-table th, .ep-content .md-table td { border: 1px solid #ccc; padding: 4px 8px; }
+@media print {
+  body * { visibility: hidden; }
+  #exportPrintArea, #exportPrintArea * { visibility: visible; }
+  #exportPrintArea { position: absolute; left: 0; top: 0; width: 100%; }
+}
+
 .fav-tabs {
   display: flex;
   gap: 6px;

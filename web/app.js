@@ -1643,6 +1643,228 @@ async function sendChat() {
 }
 
 /* ============================================================
+   模块 4 附加：导出对话（Markdown / PDF / 图片）
+   数据源为 chatHistory（[{role, content}]），用户可勾选部分导出。
+   ============================================================ */
+function openExportChat() {
+  if (!chatHistory || !chatHistory.length) { toast("暂无对话可导出。"); return; }
+  var list = $("#exportChatList");
+  list.innerHTML = "";
+  chatHistory.forEach(function (m, i) {
+    var row = document.createElement("label");
+    row.className = "export-item export-item-" + (m.role === "user" ? "user" : "assistant");
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "export-cb";
+    cb.value = String(i);
+    cb.checked = true;
+    var txt = (m.role === "user" ? "用户：" : "助手：") + stripHtmlMd(m.content || "");
+    if (txt.length > 60) txt = txt.slice(0, 60) + "…";
+    var span = document.createElement("span");
+    span.className = "export-item-text";
+    span.textContent = txt;
+    row.appendChild(cb);
+    row.appendChild(span);
+    list.appendChild(row);
+  });
+  // 默认 markdown 选中
+  var md = document.querySelector('input[name="exportFmt"][value="markdown"]');
+  if (md) md.checked = true;
+  $("#exportChat").hidden = false;
+  $("#favMask") && ($("#favMask").hidden = true);
+}
+function closeExportChat() { $("#exportChat").hidden = true; }
+
+// 把 markdown 粗略转成纯文本，便于在列表中与图片预览展示
+function stripHtmlMd(s) {
+  return String(s || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+?)`/g, "$1")
+    .replace(/[*_#>]/g, "")
+    .replace(/\[([^\]]+?)\]\([^)]+?\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function gatherSelectedChat() {
+  var cbs = $("#exportChatList").querySelectorAll(".export-cb");
+  var out = [];
+  cbs.forEach(function (cb) {
+    if (cb.checked) {
+      var idx = parseInt(cb.value, 10);
+      if (chatHistory[idx]) out.push(chatHistory[idx]);
+    }
+  });
+  return out;
+}
+
+function downloadBlob(blob, filename) {
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+
+function timestampName(ext) {
+  var d = new Date();
+  var p = function (n) { return String(n).padStart(2, "0"); };
+  return "本草对话_" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
+    "_" + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()) + "." + ext;
+}
+
+// 1) Markdown
+function exportChatMarkdown(list) {
+  var lines = ["# 本草识鉴 · 对话导出", "",
+    "> 导出时间：" + new Date().toLocaleString(), ""];
+  list.forEach(function (m) {
+    lines.push(m.role === "user" ? "## 用户" : "## 助手");
+    lines.push("");
+    lines.push((m.content || "").trim());
+    lines.push("");
+  });
+  var blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+  downloadBlob(blob, timestampName("md"));
+}
+
+// 2) 图片（Canvas 绘制对话气泡）
+function exportChatImage(list) {
+  var dpr = 2, pad = 28, lineH = 26, bubblePad = 16, maxW = 720;
+  var font = "15px 'Microsoft YaHei', 'PingFang SC', sans-serif";
+  var canvas = document.createElement("canvas");
+  var ctx = canvas.getContext("2d");
+  ctx.font = font;
+
+  // 预排版：把每条消息拆成多行（按像素宽度）
+  function wrapText(text, x, maxTextW) {
+    var out = [];
+    // 中文/英文混合按字断行
+    var cur = "";
+    for (var ch of text) {
+      var test = cur + ch;
+      if (ctx.measureText(test).width > maxTextW && cur) {
+        out.push(cur);
+        cur = ch;
+      } else {
+        cur = test;
+      }
+    }
+    if (cur) out.push(cur);
+    return out.length ? out : [""];
+  }
+
+  var items = [];   // {role, lines}
+  list.forEach(function (m) {
+    var plain = stripHtmlMd(m.content || "");
+    if (m.role === "user") plain = "用户：" + plain;
+    else plain = "助手：" + plain;
+    items.push({ role: m.role, lines: wrapText(plain, 0, maxW - pad * 2 - bubblePad * 2) });
+  });
+
+  // 计算高度
+  var totalH = pad;
+  items.forEach(function (it) {
+    totalH += bubblePad * 2 + it.lines.length * lineH;
+    totalH += 14; // 间距
+  });
+  totalH += pad;
+  canvas.width = maxW * dpr;
+  canvas.height = totalH * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.fillStyle = "#f7f3ea";
+  ctx.fillRect(0, 0, maxW, totalH);
+
+  var y = pad;
+  items.forEach(function (it) {
+    var bubbleH = bubblePad * 2 + it.lines.length * lineH;
+    var bx = pad, bw = maxW - pad * 2;
+    ctx.fillStyle = it.role === "user" ? "#dfe9d8" : "#ffffff";
+    roundRect(ctx, bx, y, bw, bubbleH, 12);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(176,58,46,.18)";
+    ctx.lineWidth = 1;
+    roundRect(ctx, bx, y, bw, bubbleH, 12);
+    ctx.stroke();
+    ctx.fillStyle = "#2b2521";
+    ctx.font = font;
+    ctx.textBaseline = "top";
+    it.lines.forEach(function (ln, k) {
+      ctx.fillText(ln, bx + bubblePad, y + bubblePad + k * lineH);
+    });
+    y += bubbleH + 14;
+  });
+
+  canvas.toBlob(function (blob) {
+    downloadBlob(blob, timestampName("png"));
+  }, "image/png");
+}
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// 3) PDF（请求后端生成文件并直接下载，不调起浏览器打印）
+async function exportChatPdf(list) {
+  try {
+    var resp = await fetch("/api/export_chat_pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(list)
+    });
+    if (!resp.ok) {
+      var err = await resp.json().catch(function () { return {}; });
+      toast("PDF 导出失败：" + (err.detail || err.message || resp.status));
+      return;
+    }
+    var blob = await resp.blob();
+    downloadBlob(blob, "本草对话导出.pdf");
+  } catch (e) {
+    toast("PDF 导出出错：" + e.message);
+  }
+}
+
+// 绑定
+function initExportChat() {
+  var btn = $("#btn-export-chat");
+  if (btn) btn.addEventListener("click", openExportChat);
+  document.querySelectorAll("[data-export-close]").forEach(function (b) {
+    b.addEventListener("click", closeExportChat);
+  });
+  var all = document.querySelector("[data-export-all]");
+  if (all) all.addEventListener("click", function () {
+    $("#exportChatList").querySelectorAll(".export-cb").forEach(function (c) { c.checked = true; });
+  });
+  var none = document.querySelector("[data-export-none]");
+  if (none) none.addEventListener("click", function () {
+    $("#exportChatList").querySelectorAll(".export-cb").forEach(function (c) { c.checked = false; });
+  });
+  var doBtn = $("#exportChatDo");
+  if (doBtn) doBtn.addEventListener("click", function () {
+    var sel = gatherSelectedChat();
+    if (!sel.length) { toast("请至少勾选一条对话。"); return; }
+    var fmt = (document.querySelector('input[name="exportFmt"]:checked') || {}).value || "markdown";
+    if (fmt === "markdown") exportChatMarkdown(sel);
+    else if (fmt === "image") exportChatImage(sel);
+    else if (fmt === "pdf") exportChatPdf(sel);
+    closeExportChat();
+    toast("已开始导出（" + fmt + "）。");
+  });
+  // 点击遮罩关闭
+  $("#exportChat").addEventListener("click", function (e) {
+    if (e.target === $("#exportChat")) closeExportChat();
+  });
+}
+initExportChat();
+
+/* ============================================================
    模块 5：药材关系图谱（力导向网络图）
    移植自 app/graph_view.py 的纯 Canvas 力导向实现，改用新中式配色
    ============================================================ */

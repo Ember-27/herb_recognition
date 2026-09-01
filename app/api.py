@@ -513,6 +513,87 @@ def workbench_page():
     """原功能工作台（5 大功能 tab 页）。"""
     return FileResponse(os.path.join(WEB_DIR, "index.html"))
 
+
+# ---------------------------------------------------------------
+# 导出对话为 PDF 文件（后端生成，直接下载，不调起浏览器打印）
+# ---------------------------------------------------------------
+@app.post("/api/export_chat_pdf")
+def export_chat_pdf(messages: list = Body(...)):
+    """将选中的对话（[{role, content}]）渲染为中文 PDF 文件返回。
+
+    前端以 JSON 数组上传，后端用 fpdf2 + 系统中文字体（微软雅黑）生成，
+    支持 markdown 基础排版（标题 / 粗体 / 列表 / 引用 / 代码块 / 表格）。
+    """
+    import tempfile
+    from fpdf import FPDF
+
+    # 选取系统中文字体（优先微软雅黑，缺失时回退到宋体/楷体）
+    cn_font = None
+    for cand in ("C:/Windows/Fonts/msyh.ttc",
+                 "C:/Windows/Fonts/simhei.ttf",
+                 "C:/Windows/Fonts/simsun.ttc",
+                 "C:/Windows/Fonts/simkai.ttf"):
+        if os.path.isfile(cand):
+            cn_font = cand
+            break
+
+    class ChatPDF(FPDF):
+        def header(self):
+            pass
+
+        def footer(self):
+            self.set_y(-12)
+            self.set_font("cn", size=8)
+            self.set_text_color(150, 150, 150)
+            self.cell(0, 8, "本草识鉴 · 对话导出  -  第 %d 页" % self.page_no(),
+                      align="C")
+
+    pdf = ChatPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.add_font("cn", "", cn_font)
+    pdf.add_font("cn", "B", cn_font)  # 粗体回退同一字体（视觉不加粗但不报错）
+    pdf.set_margins(18, 16, 18)
+    pdf.add_page()
+
+    def role_label(role):
+        return "用户" if role == "user" else "助手"
+
+    for m in messages:
+        role = m.get("role", "user") if isinstance(m, dict) else "user"
+        content = (m.get("content", "") if isinstance(m, dict) else str(m)).strip()
+        # 角色标签行
+        pdf.set_font("cn", "B", 12)
+        pdf.set_text_color(120, 50, 40)
+        pdf.multi_cell(0, 7, role_label(role), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
+        # 正文（markdown 渲染）
+        pdf.set_font("cn", "", 10.5)
+        if content:
+            # fpdf2 markdown 模式自动处理标题/粗体/列表/代码块等
+            pdf.multi_cell(0, 5.6, content, markdown=True,
+                           new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(3)
+        # 分隔线
+        y = pdf.get_y()
+        pdf.set_draw_color(220, 220, 220)
+        pdf.line(18, y, 192, y)
+        pdf.ln(3)
+
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    pdf.output(path)
+
+    from starlette.background import BackgroundTask
+    def _cleanup(p=path):
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+
+    return FileResponse(path, media_type="application/pdf",
+                        filename="本草对话导出.pdf",
+                        background=BackgroundTask(_cleanup))
+
 # 挂载静态前端（须在 API 路由定义之后，避免覆盖 /predict 等接口）
 if os.path.isdir(WEB_DIR):
     app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")

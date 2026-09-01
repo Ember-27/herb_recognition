@@ -215,6 +215,11 @@
       </aside>
 
       <div class="chat-main">
+        <div class="chat-toolbar">
+          <button type="button" class="btn-ghost" id="btn-export-chat" title="选择并导出对话">
+            ⬇ 导出对话
+          </button>
+        </div>
         <div class="chatbox" data-chat-drop>
           <div class="chat-history" id="chat-history">
             <div class="chat-welcome">
@@ -320,6 +325,36 @@
   </div>
 </div>
 <div id="favDetailMask" class="fav-mask" hidden></div>
+
+<!-- 导出对话弹窗 -->
+<div id="exportChat" class="export-chat" hidden>
+  <div class="export-chat-card">
+    <div class="export-chat-head">
+      <span class="export-chat-title">导出对话</span>
+      <button type="button" class="export-chat-close" data-export-close aria-label="关闭">×</button>
+    </div>
+    <div class="export-chat-body">
+      <div class="export-chat-hint">勾选要导出的对话，选择导出形式后点击导出。</div>
+      <div class="export-chat-actions-top">
+        <button type="button" class="fav-mini-btn" data-export-all>全选</button>
+        <button type="button" class="fav-mini-btn" data-export-none>清空</button>
+      </div>
+      <div id="exportChatList" class="export-chat-list"></div>
+      <div class="export-chat-format">
+        <div class="export-format-label">导出形式</div>
+        <label class="export-format-opt"><input type="radio" name="exportFmt" value="markdown" checked> Markdown 文件 (.md)</label>
+        <label class="export-format-opt"><input type="radio" name="exportFmt" value="pdf"> PDF 文件 (.pdf)</label>
+        <label class="export-format-opt"><input type="radio" name="exportFmt" value="image"> 图片 (.png)</label>
+      </div>
+    </div>
+    <div class="export-chat-foot">
+      <button type="button" class="fav-mini-btn" data-export-close>取消</button>
+      <button type="button" class="btn-primary" id="exportChatDo">导出</button>
+    </div>
+  </div>
+</div>
+<!-- 打印用容器（仅导出 PDF 时填充并显示） -->
+<div id="exportPrintArea" class="export-print-area" hidden></div>
 
 <script src="app.js"></script>
 </body>
