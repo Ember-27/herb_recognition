@@ -496,7 +496,8 @@ select:focus-visible,
   background: rgba(169, 50, 38, 0.04);
 }
 
-.uploader-icon { font-size: 26px; margin-bottom: 6px; }
+.uploader-icon { font-size: 26px; margin-bottom: 6px; display: flex; justify-content: center; }
+.uploader-icon img { width: 48px; height: 48px; object-fit: contain; }
 
 .uploader-text { font-size: 14px; }
 .uploader-text u { color: var(--vermilion); }
@@ -648,6 +649,23 @@ select:focus-visible,
   padding: 0;
 }
 .crop-chip-x:hover { background: var(--vermilion); color: #fff; }
+
+/* 按选区分别给出的补充描述框 */
+#recognize-text-zones { display: flex; flex-direction: column; gap: 12px; }
+.zone-text-row { display: flex; flex-direction: column; gap: 6px; }
+.zone-text-row .field-label { font-size: 13px; color: var(--ink-soft); }
+.zone-text-row .text-input { width: 100%; }
+
+/* 结果卡中回显该选区的补充描述 */
+.zone-text-echo {
+  font-size: 13px;
+  color: var(--ink-soft);
+  background: rgba(176, 58, 46, 0.06);
+  border-left: 3px solid rgba(176, 58, 46, 0.4);
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin: 4px 0 12px;
+}
 
 /* 多药联动操作行 */
 .multi-actions {

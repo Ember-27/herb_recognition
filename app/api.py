@@ -207,7 +207,7 @@ async def herb_sample_image(payload: dict = Body(None)):
 
 @app.post("/predict_multi")
 async def predict_multi(images: list[UploadFile] = File(None),
-                        text: str = Form("")):
+                        texts: str = Form("")):
     """批量识别多个框选区域：一次请求收 N 张裁剪图，返回结果数组。
 
     用于「一张图里多种药材」场景：前端在整图上画出多个选区，逐个裁剪后
@@ -215,18 +215,28 @@ async def predict_multi(images: list[UploadFile] = File(None),
 
     请求（multipart/form-data）:
       images  多个裁剪后的选区图片（2 张以上）
-      text    可选文本（如统一备注，不作为分类条件）
+      texts   JSON 数组字符串，与 images 一一对应的每区补充描述（可选）
 
     返回:
       zones    列表，每项形如 {"zone_idx", "top5", "kg_info", "similar",
                                "contraindications", "classic_formulas",
-                               "formula", "confusable", "mode", "cropped"}
+                               "formula", "confusable", "mode", "cropped",
+                               "text"}
       compat   跨区配伍分析：复用知识图谱十八反/十九畏/相须相使
       disclaimer 医疗风险提示
     """
     demo = get_demo()
     if not images:
         return {"error": "empty_images", "message": "请至少上传一个选区图片。"}
+    # 解析每区描述，与裁剪图按顺序一一对应
+    zone_texts = []
+    if texts:
+        try:
+            parsed = json.loads(texts)
+            if isinstance(parsed, list):
+                zone_texts = [str(t) for t in parsed]
+        except Exception:
+            zone_texts = []
     zones = []
     for idx, img_file in enumerate(images):
         data = await img_file.read()
@@ -240,8 +250,10 @@ async def predict_multi(images: list[UploadFile] = File(None),
             zones.append({"zone_idx": idx, "error": "decode_failed",
                           "message": "图片解码失败：" + str(e)})
             continue
-        res = demo.predict_json(arr, "")
-        zones.append({**res, "zone_idx": idx, "cropped": True})
+        zone_text = zone_texts[idx] if idx < len(zone_texts) else ""
+        res = demo.predict_json(arr, zone_text)
+        zones.append({**res, "zone_idx": idx, "cropped": True,
+                      "text": zone_text})
 
     # 跨区配伍分析：取每个选区的 Top-1 药材名
     herb_names = [_strip_top1(z) for z in zones]

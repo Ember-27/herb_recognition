@@ -42,7 +42,7 @@
         <div class="uploader" data-uploader="recognize">
           <input type="file" accept="image/*" hidden data-file-input>
           <div class="uploader-drop" data-drop-zone>
-            <div class="uploader-icon" aria-hidden="true">🖼</div>
+            <div class="uploader-icon" aria-hidden="true"><img src="/images/_02/icons8-图片-25.png" alt=""></div>
             <div class="uploader-text">
               <b>拖拽图片到此处</b>，或 <u data-click-hint>点击选择</u> · 支持 <u>Ctrl+V</u> 粘贴截图
             </div>
@@ -75,9 +75,14 @@
         </div>
 
         <div class="field-row">
-          <label class="field-label" for="recognize-text">补充描述</label>
-          <input id="recognize-text" class="text-input" type="text"
-                 placeholder="叶片椭圆、表面有细毛、味甘" maxlength="100">
+          <!-- 无选区时：单一全局补充描述 -->
+          <div id="recognize-text-global">
+            <label class="field-label" for="recognize-text">补充描述</label>
+            <input id="recognize-text" class="text-input" type="text"
+                   placeholder="叶片椭圆、表面有细毛、味甘" maxlength="100">
+          </div>
+          <!-- 有选区时：按选区分别给出描述框（由 JS 动态填充） -->
+          <div id="recognize-text-zones" hidden></div>
         </div>
 
         <div class="action-row">
@@ -150,11 +155,11 @@
     <div class="uploader" data-uploader="gradcam">
       <input type="file" accept="image/*" hidden data-file-input>
       <div class="uploader-drop" data-drop-zone>
-        <div class="uploader-icon" aria-hidden="true">🖼</div>
-        <div class="uploader-text">
-          <b>拖拽图片到此处</b>，或 <u data-click-hint>点击选择</u> · 支持 <u>Ctrl+V</u> 粘贴截图
-        </div>
-        <div class="uploader-tip">本模块必须上传图片</div>
+            <div class="uploader-icon" aria-hidden="true"><img src="/images/_02/icons8-图片-25.png" alt=""></div>
+            <div class="uploader-text">
+              <b>拖拽图片到此处</b>，或 <u data-click-hint>点击选择</u> · 支持 <u>Ctrl+V</u> 粘贴截图
+            </div>
+            <div class="uploader-tip">本模块必须上传图片</div>
       </div>
       <div class="uploader-preview" hidden>
         <img alt="">

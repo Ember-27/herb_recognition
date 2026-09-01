@@ -211,7 +211,9 @@ function initUploader(root, key) {
       cropActions.hidden = false;
       $("#btn-crop-reset").hidden = true;  // 有"重新上传"按钮即可，reset 仅在框选态显示
     }
+    if (key === "recognize") uploadState.recognize.cropList = [];
     exitCrop();
+    if (typeof renderZoneTexts === "function") renderZoneTexts();
   }
 
   drop.addEventListener("click", () => input.click());
@@ -339,7 +341,48 @@ function initCrop() {
       });
     }
     renderCropMarks();
+    renderZoneTexts();   // 同步按选区给出的文本描述栏
     syncIdentifyBtn();
+  }
+
+  // 按选区分别给出补充描述框：有选区时隐藏全局框、显示每区输入框；
+  // 无选区时恢复为单一全局补充描述框。
+  function renderZoneTexts() {
+    var globalBox = $("#recognize-text-global");
+    var zoneBox = $("#recognize-text-zones");
+    if (!globalBox || !zoneBox) return;
+    var list = uploadState.recognize.cropList;
+    if (!list.length) {
+      globalBox.hidden = false;
+      zoneBox.hidden = true;
+      zoneBox.innerHTML = "";
+      return;
+    }
+    globalBox.hidden = true;
+    zoneBox.hidden = false;
+    zoneBox.innerHTML = "";
+    list.forEach(function (c, i) {
+      if (c.text === undefined) c.text = "";   // 初始化每区描述
+      var wrap = document.createElement("div");
+      wrap.className = "zone-text-row";
+      var label = document.createElement("label");
+      label.className = "field-label";
+      label.textContent = "选区 " + (i + 1) + " 描述";
+      label.setAttribute("for", "zone-text-" + i);
+      var input = document.createElement("input");
+      input.id = "zone-text-" + i;
+      input.className = "text-input";
+      input.type = "text";
+      input.maxLength = 100;
+      input.placeholder = "如：叶片椭圆、表面有细毛、味甘";
+      input.value = c.text;
+      input.addEventListener("input", function () {
+        uploadState.recognize.cropList[i].text = input.value;
+      });
+      wrap.appendChild(label);
+      wrap.appendChild(input);
+      zoneBox.appendChild(wrap);
+    });
   }
 
   function refreshShades() {
@@ -570,6 +613,9 @@ async function runRecognizeMulti(crops) {
     }
     var fd = new FormData();
     files.forEach(function (f) { fd.append("images", f); });
+    // 按选区分别收集补充描述，与裁剪图一一对应传给后端
+    var texts = crops.map(function (c) { return (c.text || "").trim(); });
+    fd.append("texts", JSON.stringify(texts));
     var resp = await fetch("/predict_multi", { method: "POST", body: fd });
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     var data = await resp.json();
@@ -1061,6 +1107,9 @@ function renderPredictMulti(data) {
     var top1 = top5[0];
     var rest = top5.slice(1);
     html += '<div class="tcm-section-title">选区 ' + (i + 1) + ' · 识别结果</div>';
+    if (z.text) {
+      html += '<div class="zone-text-echo">📝 补充描述：' + esc(z.text) + "</div>";
+    }
     if (top1) {
       html += '<div class="tcm-card tcm-card-top1" data-herb="' + esc(top1.name) + '" style="border-left:4px solid var(--vermilion)">';
       html += '<div class="tcm-card-body">';
