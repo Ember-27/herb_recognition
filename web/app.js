@@ -177,6 +177,21 @@ function switchTab(name) {
   // 仅在首页使用亮色页头/导航，其他模块恢复深色
   if (name === "home") document.body.classList.add("home-active");
   else document.body.classList.remove("home-active");
+  // 切换页面最底层背景图（在内容之下，不挡交互）
+  var bg = document.getElementById("moduleBg");
+  if (bg) {
+    var O = "rgba(243,230,212,0.74)";   // 浅米遮罩：工作模块照片若隐若现
+    var D = "rgba(18,14,12,0.52)";       // 深色遮罩：首页照片压暗沉浸
+    var BG = {
+      home:      "linear-gradient(" + D + "," + D + "), url('images/_01/chinese-medicine-2178253_1280.jpg')",
+      recognize: "linear-gradient(" + O + "," + O + "), url('images/_01/pexels-412104586-39268177.jpg')",
+      search:    "linear-gradient(" + O + "," + O + "), url('images/_01/pexels-pietrozj-235494.jpg')",
+      gradcam:   "linear-gradient(" + O + "," + O + "), url('images/_01/natural-medicine-1426647_1280.jpg')",
+      chat:      "linear-gradient(" + O + "," + O + "), url('images/_01/kian2018-chinese-medicine-3666189_1920.jpg')",
+      graph:     "linear-gradient(" + O + "," + O + "), url('images/_01/chinese-medicine-3528232_1280.jpg')"
+    };
+    bg.style.backgroundImage = BG[name] || "";
+  }
 }
 
 $$(".home-go").forEach(function (btn) {
@@ -223,7 +238,15 @@ switchTab("home");
     el.appendChild(img);
     el.appendChild(meta);
     el.title = h.name + " " + h.py;
-    el.addEventListener("click", function () { switchTab("recognize"); });
+    el.addEventListener("click", function () {
+      // 跳转到「关系图谱」并聚焦该药材
+      var ginput = document.getElementById("graph-focus");
+      if (ginput) ginput.value = h.name;
+      // 先标记图谱已初始化，避免 switchTab 内部的 loadGraph("") 与本次聚焦并发冲突
+      window._graphLoaded = true;
+      switchTab("graph");
+      if (typeof loadGraph === "function") loadGraph(h.name);
+    });
     el.addEventListener("animationend", function () { el.classList.remove("enter"); });
     stage.appendChild(el);
     return el;
@@ -845,6 +868,9 @@ function renderFavList() {
     empty.hidden = false;
     $("#favIconHerb").hidden = favTab !== "herb";
     $("#favIconChat").hidden = favTab === "herb";
+    // 药材空态用自定义图案，对话空态用原对话气泡
+    var favImg = $("#favEmptyImg");
+    if (favImg) favImg.hidden = favTab !== "herb";
     if (favTab === "herb") {
       $("#favEmptyTitle").textContent = "还没有收藏药材";
       $("#favEmptyHint").textContent  = "点击药材卡片上的 ★，把喜欢的本草收进册子";
@@ -2261,6 +2287,9 @@ function graphEnsureAll() {
     graphBuild();
     graphBuildLegend();
   }
+  // 回到全体药材即清空聚焦搜索栏，进行全局（按条件）搜索，而非限定某药材
+  var gf = document.getElementById("graph-focus");
+  if (gf && gf.value) gf.value = "";
 }
 
 // 计算某节点当前可见层级（仅在有筛选或选中时区分）
