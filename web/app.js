@@ -294,7 +294,7 @@ switchTab("home");
    root: 上传器容器，内含 [data-file-input] [data-drop-zone] [data-clear]
    ============================================================ */
 var uploadState = {
-  recognize: { file: null, preview: null, cropList: [], cropActive: -1 },
+  recognize: { images: [], activeId: null, viewId: null, cropMode: false },
   gradcam: { file: null, preview: null },
 };
 
@@ -343,7 +343,6 @@ function initUploader(root, key) {
     if (cropActions) {
       cropActions.hidden = false;
     }
-    if (key === "recognize") uploadState.recognize.cropList = [];
     exitCrop();
     if (typeof renderZoneTexts === "function") renderZoneTexts();
   }
@@ -379,145 +378,341 @@ function initUploader(root, key) {
   });
 }
 
-initUploader($(".uploader[data-uploader='recognize']"), "recognize");
+initMultiImage();
 initUploader($(".uploader[data-uploader='gradcam']"), "gradcam");
 
-/* 执行图片识别（支持整图或框选裁剪图）。isCrop=true 表示 crop 模式 */
-function runRecognizeWithImage(imgFile, isCrop) {
-  var text = $("#recognize-text").value.trim();
-  var resultBox = $("#recognize-result");
-  var loading = $(".result-loading", resultBox);
-  var cards = $("#recognize-cards");
-  resultBox.hidden = false;
-  loading.hidden = false;
-  cards.innerHTML = "";
-  var recEmpty = $("#recognize-empty");
-  if (recEmpty) recEmpty.style.display = "none";
-  var btn = $("[data-identify]");
-  if (btn) btn.disabled = true;
-  return postForm("/predict" + (isCrop ? "?crop=1" : ""), (function () {
-    var fd = new FormData();
-    fd.append("image", imgFile);
-    fd.append("text", text);
-    return fd;
-  })()).then(function (data) {
-    loading.hidden = true;
-    if (data.error) { cards.innerHTML = '<div class="tcm-risk">' + esc(data.message) + "</div>"; return; }
-    renderPredict(data);
-  }, function (err) {
-    loading.hidden = true;
-    cards.innerHTML = '<div class="tcm-risk">请求失败：' + esc(err.message) + "</div>";
-  }).then(function () {
-    if (btn) btn.disabled = false;
+/* ============================================================
+   模块 1：多图识别
+   uploadState.recognize.images[] 每张图独立（file/preview/cropList/result），
+   activeId = 左侧主舞台当前编辑的图片；viewId = 右侧结果区当前查看的图片。
+   ============================================================ */
+function recEl(id) { return document.getElementById(id); }
+var imgUid = 0;
+
+function addImages(fileList) {
+  var files = Array.prototype.slice.call(fileList || []);
+  if (!files.length) return;
+  var multi = recEl("rec-multi");
+  if (multi) multi.hidden = false;
+  files.forEach(function (file) {
+    if (!file || !file.type || !file.type.startsWith("image/")) return;
+    uploadState.recognize.images.push({
+      id: "img_" + (++imgUid),
+      file: file,
+      preview: URL.createObjectURL(file),
+      name: file.name || "图片",
+      cropList: [],
+      result: null,
+      loading: false,
+      error: null
+    });
+  });
+  if (!uploadState.recognize.activeId && uploadState.recognize.images.length) {
+    uploadState.recognize.activeId = uploadState.recognize.images[0].id;
+  }
+  if (!uploadState.recognize.viewId && uploadState.recognize.images.length) {
+    uploadState.recognize.viewId = uploadState.recognize.images[0].id;
+  }
+  renderGallery(); renderMain(); renderResultTabs(); syncIdentifyBtn(); updateEmpty();
+}
+
+function getImg(id) {
+  return uploadState.recognize.images.filter(function (x) { return x.id === id; })[0] || null;
+}
+
+function removeImage(id) {
+  var arr = uploadState.recognize.images;
+  var idx = arr.findIndex(function (x) { return x.id === id; });
+  if (idx < 0) return;
+  // 仅清理该图片自身的全部选区/结果，互不影响其它图片
+  if (arr[idx].preview) URL.revokeObjectURL(arr[idx].preview);
+  arr[idx].cropList = [];
+  arr[idx].result = null;
+  arr[idx].loading = false;
+  arr.splice(idx, 1);
+  if (uploadState.recognize.activeId === id) {
+    uploadState.recognize.activeId = arr.length ? arr[Math.min(idx, arr.length - 1)].id : null;
+  }
+  if (uploadState.recognize.viewId === id) {
+    uploadState.recognize.viewId = arr.length ? arr[0].id : null;
+  }
+  if (!arr.length) {
+    uploadState.recognize.cropMode = false;
+    var m = recEl("rec-multi"); if (m) m.hidden = true;
+    var ov = recEl("crop-overlay");
+    if (ov) { ov.hidden = true; if (ov.parentElement) ov.parentElement.classList.remove("cropping"); }
+  }
+  renderGallery(); renderMain(); renderResultTabs(); syncIdentifyBtn(); updateEmpty();
+  if (window.renderCropList) window.renderCropList(); // 刷新选区 chips 为当前激活图
+}
+
+function setActive(id) {
+  uploadState.recognize.activeId = id;
+  renderGallery(); renderMain(); renderZoneTexts(); syncIdentifyBtn();
+  if (uploadState.recognize.cropMode && id) {
+    var ov = recEl("crop-overlay"), st = ov && ov.parentElement;
+    if (ov) { ov.hidden = false; if (st) st.classList.add("cropping"); }
+  }
+}
+
+function renderGallery() {
+  var wrap = recEl("rec-gallery");
+  if (!wrap) return;
+  wrap.innerHTML = "";
+  uploadState.recognize.images.forEach(function (img, i) {
+    var card = document.createElement("div");
+    card.className = "rec-thumb" + (img.id === uploadState.recognize.activeId ? " active" : "");
+    card.setAttribute("data-img", img.id);
+    card.innerHTML =
+      '<img src="' + img.preview + '" alt="">' +
+      '<span class="rec-thumb-no">' + (i + 1) + '</span>' +
+      (img.result ? '<span class="rec-thumb-dot" title="已识别"></span>' : '') +
+      '<button type="button" class="rec-thumb-del" data-del="' + img.id + '" title="移除">×</button>';
+    card.addEventListener("click", function (e) {
+      if (e.target.closest(".rec-thumb-del")) return;
+      setActive(img.id);
+    });
+    wrap.appendChild(card);
+  });
+  wrap.querySelectorAll("[data-del]").forEach(function (b) {
+    b.addEventListener("click", function (e) {
+      e.stopPropagation();
+      removeImage(b.getAttribute("data-del"));
+    });
   });
 }
 
-/* ============ 图片识别：多框选区域识别 ============ */
-function initCrop() {
-  var img = $("#recognize-preview-img");
-  var overlay = $("#crop-overlay");
-  var rect = $("#crop-rect");
+function renderMain() {
+  var stage = recEl("preview-stage");
+  var imgEl = recEl("recognize-preview-img");
+  var active = getImg(uploadState.recognize.activeId);
+  if (!active) { if (stage) stage.style.display = "none"; return; }
+  if (stage) stage.style.display = "";
+  imgEl.src = active.preview;
+  if (stage) stage.querySelectorAll(".crop-mark").forEach(function (el) { el.remove(); });
+  renderCropMarks();
+}
+
+function renderCropMarks() {
+  var stage = recEl("preview-stage");
+  if (!stage) return;
+  stage.querySelectorAll(".crop-mark").forEach(function (el) { el.remove(); });
+  var a = getImg(uploadState.recognize.activeId);
+  if (!a || !a.cropList.length) return;
+  a.cropList.forEach(function (c, i) {
+    var mark = document.createElement("div");
+    mark.className = "crop-mark";
+    mark.style.left = c.x + "px"; mark.style.top = c.y + "px";
+    mark.style.width = c.w + "px"; mark.style.height = c.h + "px";
+    var badge = document.createElement("span");
+    badge.className = "crop-mark-no"; badge.textContent = i + 1;
+    mark.appendChild(badge);
+    stage.appendChild(mark);
+  });
+}
+
+function renderResultTabs() {
+  var tabs = recEl("rec-result-tabs");
+  if (!tabs) return;
+  var imgs = uploadState.recognize.images;
+  if (!imgs.length) { tabs.hidden = true; tabs.innerHTML = ""; return; }
+  tabs.hidden = false; tabs.innerHTML = "";
+  var label = document.createElement("span");
+  label.className = "rec-result-tabs-label";
+  label.textContent = "查看图片结果：";
+  tabs.appendChild(label);
+  imgs.forEach(function (img, i) {
+    var t = document.createElement("button");
+    t.type = "button";
+    t.className = "rec-result-tab" + (img.id === uploadState.recognize.viewId ? " active" : "");
+    t.setAttribute("data-view", img.id);
+    t.innerHTML = (i + 1) + (img.result ? " ✓" : (img.loading ? " …" : ""));
+    t.title = img.name;
+    t.addEventListener("click", function () {
+      uploadState.recognize.viewId = img.id;
+      renderResultTabs(); renderResult();
+    });
+    tabs.appendChild(t);
+  });
+}
+
+function updateEmpty() {
+  var empty = recEl("recognize-empty");
+  if (!empty) return;
+  empty.style.display = uploadState.recognize.images.length ? "none" : "";
+}
+
+async function identifyImage(imgObj) {
+  if (!imgObj) return;
+  imgObj.loading = true;
+  uploadState.recognize.viewId = imgObj.id;
+  renderResultTabs(); showLoading();
+  try {
+    var data;
+    if (imgObj.cropList.length) {
+      setActive(imgObj.id);
+      var files = [];
+      for (var i = 0; i < imgObj.cropList.length; i++) {
+        var blob = await window.cropZoneToFile(imgObj.cropList[i]);
+        if (!blob) throw new Error("选区 " + (i + 1) + " 裁剪失败");
+        files.push(new File([blob], "zone" + i + ".png", { type: "image/png" }));
+      }
+      var fd = new FormData();
+      files.forEach(function (f) { fd.append("images", f); });
+      var texts = imgObj.cropList.map(function (c) { return (c.text || "").trim(); });
+      fd.append("texts", JSON.stringify(texts));
+      var resp = await fetch("/predict_multi", { method: "POST", body: fd });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      data = await resp.json();
+      if (data.error) throw new Error(data.message);
+      imgObj.result = { multi: true, data: data };
+    } else {
+      var text = recEl("recognize-text").value.trim();
+      var f2 = new FormData();
+      f2.append("image", imgObj.file);
+      f2.append("text", text);
+      var r2 = await fetch("/predict", { method: "POST", body: f2 });
+      if (!r2.ok) throw new Error("HTTP " + r2.status);
+      data = await r2.json();
+      if (data.error) throw new Error(data.message);
+      imgObj.result = { multi: false, data: data };
+    }
+  } catch (err) {
+    imgObj.error = err.message;
+  } finally {
+    imgObj.loading = false;
+    renderResultTabs(); hideLoading();
+    if (uploadState.recognize.viewId === imgObj.id) renderResult();
+  }
+}
+
+function showLoading() {
+  var box = recEl("recognize-result"); if (!box) return;
+  box.hidden = false;
+  var loading = box.querySelector(".result-loading"); if (loading) loading.hidden = false;
+  var cards = recEl("recognize-cards"); if (cards) cards.innerHTML = "";
+  var empty = recEl("recognize-empty"); if (empty) empty.style.display = "none";
+}
+function hideLoading() {
+  var box = recEl("recognize-result"); if (!box) return;
+  var loading = box.querySelector(".result-loading"); if (loading) loading.hidden = true;
+}
+
+function renderResult() {
+  var box = recEl("recognize-result");
+  var cards = recEl("recognize-cards");
+  if (!box || !cards) return;
+  var img = getImg(uploadState.recognize.viewId);
+  if (!img) { box.hidden = true; return; }
+  box.hidden = false;
+  if (!img.result) {
+    cards.innerHTML = '<div class="rec-view-hint">图片 ' + (uploadState.recognize.images.indexOf(img) + 1) +
+      ' 尚未识别，请在左侧点击它并「识别当前图片」。</div>';
+    return;
+  }
+  var res = img.result;
+  if (res.multi) renderPredictMulti(res.data); else renderPredict(res.data);
+}
+
+/* ============ 图片识别：多图上传器 + 选区（针对指定图片） ============ */
+function initMultiImage() {
+  var root = $(".uploader[data-uploader='recognize']");
+  if (!root) return;
+  var input = $("[data-file-input]", root);
+  var drop = $("[data-drop-zone]", root);
+  var clearBtn = $("[data-clear]", root);
+  var addMore = $("[data-add-more]", root);
+
+  input.addEventListener("change", function () { addImages(input.files); input.value = ""; });
+  drop.addEventListener("click", function () { input.click(); });
+  $$("[data-click-hint]", root).forEach(function (el) {
+    el.addEventListener("click", function (e) { e.stopPropagation(); input.click(); });
+  });
+  if (addMore) addMore.addEventListener("click", function () { input.click(); });
+  if (clearBtn) clearBtn.addEventListener("click", function () {
+    uploadState.recognize.images.forEach(function (x) { if (x.preview) URL.revokeObjectURL(x.preview); });
+    uploadState.recognize.images = [];
+    uploadState.recognize.activeId = null;
+    uploadState.recognize.viewId = null;
+    uploadState.recognize.cropMode = false;
+    var m = recEl("rec-multi"); if (m) m.hidden = true;
+    var ov = recEl("crop-overlay"); if (ov) { ov.hidden = true; ov.parentElement.classList.remove("cropping"); }
+    var ca = recEl("crop-actions"); if (ca) ca.hidden = true;
+    var hint = recEl("crop-hint"); if (hint) hint.hidden = true;
+    renderGallery(); renderResultTabs(); syncIdentifyBtn(); updateEmpty();
+  });
+
+  ["dragenter", "dragover"].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("drag-over"); });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("drag-over"); });
+  });
+  drop.addEventListener("drop", function (e) {
+    var fl = e.dataTransfer && e.dataTransfer.files;
+    if (fl && fl.length) addImages(fl);
+  });
+
+  initCropMulti();
+  initIdentify();
+}
+
+function initIdentify() {
+  var btn = $("[data-identify]");
+  var btnAll = $("[data-identify-all]");
+  if (btn) btn.addEventListener("click", function () {
+    var a = getImg(uploadState.recognize.activeId);
+    if (!a) { alert("请先添加图片"); return; }
+    identifyImage(a);
+  });
+  if (btnAll) btnAll.addEventListener("click", async function () {
+    var imgs = uploadState.recognize.images;
+    if (!imgs.length) { alert("请先添加图片"); return; }
+    for (var i = 0; i < imgs.length; i++) { await identifyImage(imgs[i]); }
+  });
+}
+
+/* 选区针对「当前主舞台图片」。流程：点「选区」进入框选态 → 点左侧某图选定目标
+   → 在该图上拖拽框选 → 「添加选区」。每张图独立保存 cropList，互不干扰。 */
+function initCropMulti() {
+  var img = recEl("recognize-preview-img");
+  var overlay = recEl("crop-overlay");
+  var rect = recEl("crop-rect");
   var stage = overlay ? overlay.parentElement : null;
-  var btnCrop = $("#btn-crop");
-  var btnConfirm = $("#btn-crop-confirm");
-  var btnCancel = $("#btn-crop-cancel");
-  var btnReset = null;
-  var btnClearCrops = $("#btn-crop-clear");
-  var cropListWrap = $("#crop-list");
+  var btnCrop = recEl("btn-crop");
+  var btnConfirm = recEl("btn-crop-confirm");
+  var btnCancel = recEl("btn-crop-cancel");
+  var btnClear = recEl("btn-crop-clear");
+  var cropHint = recEl("crop-hint");
+  var cropListWrap = recEl("crop-list");
   if (!img || !overlay || !stage) return;
 
-  var drawing = false;
-  var startX = 0, startY = 0;
-  var sel = null; // {x,y,w,h} 相对图片显示区域（CSS 像素）
+  var drawing = false, startX = 0, startY = 0, sel = null;
 
-  // 在 stage 上绘制已确认选区的持久痕迹（带编号角标）
-  function renderCropMarks() {
-    if (!stage) return;
-    var old = stage.querySelectorAll(".crop-mark");
-    old.forEach(function (el) { el.remove(); });
-    if (!uploadState.recognize.cropList.length) return;
-    uploadState.recognize.cropList.forEach(function (c, i) {
-      var mark = document.createElement("div");
-      mark.className = "crop-mark";
-      mark.style.left = c.x + "px";
-      mark.style.top = c.y + "px";
-      mark.style.width = c.w + "px";
-      mark.style.height = c.h + "px";
-      var badge = document.createElement("span");
-      badge.className = "crop-mark-no";
-      badge.textContent = i + 1;
-      mark.appendChild(badge);
-      stage.appendChild(mark);
-    });
+  function activeCropList() {
+    var a = getImg(uploadState.recognize.activeId);
+    return a ? a.cropList : [];
   }
-
-  // 已确认选区叠加层（每个选区一个 div，可点击删除）+ 原图上的框选痕迹
   function renderCropList() {
     if (cropListWrap) {
       cropListWrap.innerHTML = "";
-      uploadState.recognize.cropList.forEach(function (c, i) {
+      activeCropList().forEach(function (c, i) {
         var chip = document.createElement("span");
         chip.className = "crop-chip";
         chip.innerHTML = "选区 " + (i + 1) +
           ' <button type="button" class="crop-chip-x" data-crop-del="' + i + '" title="删除该选区">×</button>';
         cropListWrap.appendChild(chip);
       });
-      var delBtns = cropListWrap.querySelectorAll("[data-crop-del]");
-      delBtns.forEach(function (b) {
+      cropListWrap.querySelectorAll("[data-crop-del]").forEach(function (b) {
         b.addEventListener("click", function (e) {
           e.stopPropagation();
-          var idx = parseInt(b.getAttribute("data-crop-del"), 10);
-          uploadState.recognize.cropList.splice(idx, 1);
-          renderCropList();
-          syncIdentifyBtn();
+          activeCropList().splice(parseInt(b.getAttribute("data-crop-del"), 10), 1);
+          renderCropList(); syncIdentifyBtn();
         });
       });
     }
-    renderCropMarks();
-    renderZoneTexts();   // 同步按选区给出的文本描述栏
-    syncIdentifyBtn();
+    renderCropMarks(); renderZoneTexts(); syncIdentifyBtn();
   }
-
-  // 按选区分别给出补充描述框：有选区时隐藏全局框、显示每区输入框；
-  // 无选区时恢复为单一全局补充描述框。
-  function renderZoneTexts() {
-    var globalBox = $("#recognize-text-global");
-    var zoneBox = $("#recognize-text-zones");
-    if (!globalBox || !zoneBox) return;
-    var list = uploadState.recognize.cropList;
-    if (!list.length) {
-      globalBox.hidden = false;
-      zoneBox.hidden = true;
-      zoneBox.innerHTML = "";
-      return;
-    }
-    globalBox.hidden = true;
-    zoneBox.hidden = false;
-    zoneBox.innerHTML = "";
-    list.forEach(function (c, i) {
-      if (c.text === undefined) c.text = "";   // 初始化每区描述
-      var wrap = document.createElement("div");
-      wrap.className = "zone-text-row";
-      var label = document.createElement("label");
-      label.className = "field-label";
-      label.textContent = "选区 " + (i + 1) + " 描述";
-      label.setAttribute("for", "zone-text-" + i);
-      var input = document.createElement("input");
-      input.id = "zone-text-" + i;
-      input.className = "text-input";
-      input.type = "text";
-      input.maxLength = 100;
-      input.placeholder = "如：叶片椭圆、表面有细毛、味甘";
-      input.value = c.text;
-      input.addEventListener("input", function () {
-        uploadState.recognize.cropList[i].text = input.value;
-      });
-      wrap.appendChild(label);
-      wrap.appendChild(input);
-      zoneBox.appendChild(wrap);
-    });
-  }
-
   function refreshShades() {
     if (!sel) {
       [".crop-shade-t", ".crop-shade-b", ".crop-shade-l", ".crop-shade-r"].forEach(function (s) {
@@ -533,53 +728,35 @@ function initCrop() {
     if (l) { l.style.top = sel.y + "px"; l.style.left = "0px"; l.style.width = sel.x + "px"; l.style.height = sel.h + "px"; }
     if (r) { r.style.top = sel.y + "px"; r.style.right = "0px"; r.style.width = (w - sel.x - sel.w) + "px"; r.style.height = sel.h + "px"; }
   }
-
   function drawRect() {
     if (!sel) { rect.style.cssText = "display:none"; return; }
     rect.style.display = "block";
-    rect.style.left = sel.x + "px";
-    rect.style.top = sel.y + "px";
-    rect.style.width = sel.w + "px";
-    rect.style.height = sel.h + "px";
+    rect.style.left = sel.x + "px"; rect.style.top = sel.y + "px";
+    rect.style.width = sel.w + "px"; rect.style.height = sel.h + "px";
     refreshShades();
   }
-
   function posInStage(e) {
     var r = stage.getBoundingClientRect();
     var cx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
     var cy = (e.touches ? e.touches[0].clientY : e.clientY) - r.top;
     return { x: Math.max(0, Math.min(cx, r.width)), y: Math.max(0, Math.min(cy, r.height)) };
   }
-
   function begin(e) {
     if (overlay.hidden) return;
-    e.preventDefault();
-    drawing = true;
-    var p = posInStage(e);
-    startX = p.x; startY = p.y;
-    sel = { x: p.x, y: p.y, w: 0, h: 0 };
-    uploadState.recognize.cropActive = -1;
-    drawRect();
+    e.preventDefault(); drawing = true;
+    var p = posInStage(e); startX = p.x; startY = p.y;
+    sel = { x: p.x, y: p.y, w: 0, h: 0 }; drawRect();
   }
   function move(e) {
-    if (!drawing) return;
-    e.preventDefault();
+    if (!drawing) return; e.preventDefault();
     var p = posInStage(e);
-    sel = {
-      x: Math.min(startX, p.x),
-      y: Math.min(startY, p.y),
-      w: Math.abs(p.x - startX),
-      h: Math.abs(p.y - startY)
-    };
+    sel = { x: Math.min(startX, p.x), y: Math.min(startY, p.y), w: Math.abs(p.x - startX), h: Math.abs(p.y - startY) };
     drawRect();
   }
   function end() {
     drawing = false;
-    if (sel && (sel.w < 8 || sel.h < 8)) { // 太小视为取消选区
-      sel = null; rect.style.cssText = "display:none"; refreshShades();
-    }
+    if (sel && (sel.w < 8 || sel.h < 8)) { sel = null; rect.style.cssText = "display:none"; refreshShades(); }
   }
-
   overlay.addEventListener("mousedown", begin);
   window.addEventListener("mousemove", move);
   window.addEventListener("mouseup", end);
@@ -588,54 +765,32 @@ function initCrop() {
   overlay.addEventListener("touchend", end);
 
   btnCrop.addEventListener("click", function () {
-    overlay.hidden = false;
-    stage.classList.add("cropping");
-    btnCrop.hidden = true;
-    btnConfirm.hidden = false;
-    btnCancel.hidden = false;
+    if (!getImg(uploadState.recognize.activeId)) { alert("请先添加一张图片"); return; }
+    uploadState.recognize.cropMode = true;
+    overlay.hidden = false; stage.classList.add("cropping");
+    btnCrop.hidden = true; btnConfirm.hidden = false; btnCancel.hidden = false;
+    if (cropHint) cropHint.hidden = false;
   });
-
   btnCancel.addEventListener("click", function () {
-    exitCropMode();
+    uploadState.recognize.cropMode = false;
+    overlay.hidden = true; stage.classList.remove("cropping");
+    sel = null; rect.style.cssText = "display:none"; refreshShades();
+    btnCrop.hidden = false; btnConfirm.hidden = true; btnCancel.hidden = true;
+    if (cropHint) cropHint.hidden = true;
+    if (btnClear) btnClear.hidden = true;
   });
-
-  // 确认当前绘制的选区：加入 cropList（不退出框选态，可继续叠加框选）
   btnConfirm.addEventListener("click", function () {
     if (!sel || sel.w < 8 || sel.h < 8) { alert("请先框选一个有效区域"); return; }
-    uploadState.recognize.cropList.push({ x: sel.x, y: sel.y, w: sel.w, h: sel.h });
+    activeCropList().push({ x: sel.x, y: sel.y, w: sel.w, h: sel.h });
     renderCropList();
-    if (btnClearCrops) btnClearCrops.hidden = false;
-    // 重置绘制态，保留框选模式以便继续画下一个框
+    if (btnClear) btnClear.hidden = false;
     sel = null; rect.style.cssText = "display:none"; refreshShades();
   });
+  if (btnClear) btnClear.addEventListener("click", function () {
+    activeCropList().length = 0; renderCropList();
+  });
 
-  // 清除全部选区（保留原图）
-  if (btnClearCrops) {
-    btnClearCrops.addEventListener("click", function () {
-      uploadState.recognize.cropList = [];
-      renderCropList();
-    });
-  }
-
-  function exitCropMode() {
-    overlay.hidden = true;
-    stage.classList.remove("cropping");
-    sel = null; rect.style.cssText = "display:none"; refreshShades();
-    btnCrop.hidden = false;
-    btnConfirm.hidden = true;
-    btnCancel.hidden = true;
-  }
-
-  // 清除图片：复用上传器的 data-clear（已联动隐藏 crop-actions），这里确保退出框选
-  if (btnReset) {
-    btnReset.addEventListener("click", function () {
-      uploadState.recognize.cropList = [];
-      renderCropList();
-      exitCropMode();
-    });
-  }
-
-  // 暴露给识别流程：把某个选区(显示坐标)裁剪为图片文件
+  // 暴露给识别流程：把某个选区(显示坐标)裁剪为图片文件（取当前主舞台图片）
   window.cropZoneToFile = function (c) {
     var natW = img.naturalWidth, natH = img.naturalHeight;
     var dispW = img.clientWidth, dispH = img.clientHeight;
@@ -649,9 +804,55 @@ function initCrop() {
     return new Promise(function (res) { canvas.toBlob(res, "image/png"); });
   };
 
+  // 暴露给删除图片逻辑，刷新当前激活图的选区 chips
+  window.renderCropList = renderCropList;
+
   renderCropList();
 }
-initCrop();
+
+/* 按当前图片的选区分别给出补充描述框（无选区时恢复单一全局框） */
+function renderZoneTexts() {
+  var globalBox = recEl("recognize-text-global");
+  var zoneBox = recEl("recognize-text-zones");
+  if (!globalBox || !zoneBox) return;
+  if (!uploadState.recognize.images.length) { globalBox.hidden = false; zoneBox.hidden = true; zoneBox.innerHTML = ""; return; }
+  var a = getImg(uploadState.recognize.activeId);
+  var list = a ? a.cropList : [];
+  if (!list.length) { globalBox.hidden = false; zoneBox.hidden = true; zoneBox.innerHTML = ""; return; }
+  globalBox.hidden = true; zoneBox.hidden = false; zoneBox.innerHTML = "";
+  list.forEach(function (c, i) {
+    if (c.text === undefined) c.text = "";
+    var wrap = document.createElement("div");
+    wrap.className = "zone-text-row";
+    var label = document.createElement("label");
+    label.className = "field-label";
+    label.textContent = "选区 " + (i + 1) + " 描述";
+    label.setAttribute("for", "zone-text-" + i);
+    var input = document.createElement("input");
+    input.id = "zone-text-" + i;
+    input.className = "text-input"; input.type = "text"; input.maxLength = 100;
+    input.placeholder = "如：叶片椭圆、表面有细毛、味甘";
+    input.value = c.text;
+    input.addEventListener("input", function () {
+      var act = getImg(uploadState.recognize.activeId);
+      if (act) act.cropList[i].text = input.value;
+    });
+    wrap.appendChild(label); wrap.appendChild(input);
+    zoneBox.appendChild(wrap);
+  });
+}
+
+/* 识别按钮文案随当前图片选区数量动态变化 */
+function syncIdentifyBtn() {
+  var btn = $("[data-identify]");
+  if (!btn) return;
+  var a = getImg(uploadState.recognize.activeId);
+  var n = a ? a.cropList.length : 0;
+  btn.textContent = n > 0 ? ("识别当前图片（" + n + " 选区）") : "识别当前图片";
+  // 有图片即展示「选区」操作条（单图/多图均可用框选识别）
+  var ca = recEl("crop-actions");
+  if (ca) ca.hidden = !uploadState.recognize.images.length;
+}
 
 /* Ctrl+V 粘贴图片：优先投递给当前可见模块的上传器，否则投递给聊天附件 */
 document.addEventListener("paste", function (e) {
@@ -663,25 +864,19 @@ document.addEventListener("paste", function (e) {
       var active = $(".module.active");
       var activeKey = active && active.id === "recognize" ? "recognize"
                     : active && active.id === "gradcam" ? "gradcam" : null;
-      if (activeKey) {
-        var root = $(".uploader[data-uploader='" + activeKey + "']");
+      if (activeKey === "recognize") {
+        addImages([file]);
+      } else if (activeKey === "gradcam") {
+        var root = $(".uploader[data-uploader='gradcam']");
         var input = $("[data-file-input]", root);
         var drop = $("[data-drop-zone]", root);
         var preview = $(".uploader-preview", root);
         var imgEl = $("img", preview);
-        uploadState[activeKey].file = file;
-        uploadState[activeKey].preview = URL.createObjectURL(file);
-        imgEl.src = uploadState[activeKey].preview;
+        uploadState.gradcam.file = file;
+        uploadState.gradcam.preview = URL.createObjectURL(file);
+        imgEl.src = uploadState.gradcam.preview;
         preview.hidden = false;
         drop.style.display = "none";
-        if (activeKey === "recognize") {
-          uploadState.recognize.cropList = [];
-          if (typeof syncIdentifyBtn === "function") syncIdentifyBtn();
-          var ca = $("#crop-actions");
-          if (ca) { ca.hidden = false; }
-          var ov = $("#crop-overlay");
-          if (ov) { ov.hidden = true; ov.parentElement.classList.remove("cropping"); }
-        }
       } else {
         chatAttachFile(file);
       }
@@ -690,78 +885,6 @@ document.addEventListener("paste", function (e) {
     }
   }
 });
-
-/* 识别按钮文案随选区数量动态变化（智能分流提示） */
-function syncIdentifyBtn() {
-  var btn = $("[data-identify]");
-  if (!btn) return;
-  var n = (uploadState.recognize.cropList || []).length;
-  btn.textContent = n > 0 ? ("识别选区（" + n + " 个）") : "开始识别";
-}
-
-/* ============================================================
-   模块 1：图片识别 → 药材档案大卡
-   ============================================================ */
-$("[data-identify]").addEventListener("click", async function () {
-  var imgFile = uploadState.recognize.file;
-  var text = $("#recognize-text").value.trim();
-
-  if (!imgFile && !text) {
-    alert("请上传图片或输入文字描述。");
-    return;
-  }
-
-  // 智能分流：有多个选区则批量识别选区，否则整图识别
-  var crops = uploadState.recognize.cropList;
-  if (imgFile && crops && crops.length) {
-    await runRecognizeMulti(crops);
-    return;
-  }
-  runRecognizeWithImage(imgFile, false);
-});
-
-/* 批量识别多个选区：逐个裁剪并调用 /predict_multi */
-async function runRecognizeMulti(crops) {
-  var btn = $("[data-identify]");
-  var resultBox = $("#recognize-result");
-  var loading = $(".result-loading", resultBox);
-  var cards = $("#recognize-cards");
-  resultBox.hidden = false;
-  loading.hidden = false;
-  cards.innerHTML = "";
-  var recEmpty = $("#recognize-empty");
-  if (recEmpty) recEmpty.style.display = "none";
-  if (btn) btn.disabled = true;
-  try {
-    var files = [];
-    for (var i = 0; i < crops.length; i++) {
-      var blob = await window.cropZoneToFile(crops[i]);
-      if (!blob) {
-        loading.hidden = true;
-        if (btn) btn.disabled = false;
-        alert("选区 " + (i + 1) + " 裁剪失败，请重试");
-        return;
-      }
-      files.push(new File([blob], "zone" + i + ".png", { type: "image/png" }));
-    }
-    var fd = new FormData();
-    files.forEach(function (f) { fd.append("images", f); });
-    // 按选区分别收集补充描述，与裁剪图一一对应传给后端
-    var texts = crops.map(function (c) { return (c.text || "").trim(); });
-    fd.append("texts", JSON.stringify(texts));
-    var resp = await fetch("/predict_multi", { method: "POST", body: fd });
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    var data = await resp.json();
-    loading.hidden = true;
-    if (data.error) { cards.innerHTML = '<div class="tcm-risk">' + esc(data.message) + "</div>"; return; }
-    renderPredictMulti(data);
-  } catch (err) {
-    loading.hidden = true;
-    cards.innerHTML = '<div class="tcm-risk">请求失败：' + esc(err.message) + "</div>";
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
 
 /* ============================================================
    收藏夹（后端 JSON 持久化）
@@ -2559,6 +2682,12 @@ function graphShowDetail(n) {
   info.style.display = "block";
 }
 
+// 隐藏药材知识卡片（当前药材不再是聚焦对象时调用，如点击「全图浏览」/「返回上个图谱」）
+function graphHideDetail() {
+  var info = $("#graph-info");
+  if (info) info.style.display = "none";
+}
+
 function graphCanvasToWorld(e) {
   var canvas = $("#graph-canvas");
   var rect = canvas.getBoundingClientRect();
@@ -2607,15 +2736,10 @@ function graphInitEvents() {
       graphSimEnabled = true;   // 解冻力导向，拖拽时邻居可重排
       canvas.classList.add("dragging");
     } else {
-      // 空白处拖拽 = 平移视图
+      // 空白处拖拽 = 平移视图（仅平移，不再清除选中 / 触发其它功能）
       panning = true;
       lastX = e.clientX; lastY = e.clientY;
       canvas.classList.add("dragging");
-      if (graphSelected) {
-        graphSelected = null;
-        graphUpdateHighlight();
-        $("#graph-info").style.display = "none";
-      }
     }
   });
 
@@ -2677,19 +2801,8 @@ function graphInitEvents() {
         }, 450);
         $("#graph-focus").value = hit.id;
       });
-    } else {
-      // 点击空白：若有快照则返回「筛选结果」（全库命中筛选的药材）；否则清除选中复位
-      if (graphRestorePrev()) {
-        $("#graph-info").style.display = "none";
-      } else {
-        graphSelected = null;
-        graphUpdateHighlight();
-        if (graphHasFilter()) graphFitToHighlight();  // 有筛选：复原到筛选结果聚焦视图
-        else graphFitAll();                          // 无筛选：复原到全图居中铺满
-        graphDraw();
-        $("#graph-info").style.display = "none";
-      }
     }
+    // 点击空白处不再触发任何功能；「复原视图比例 / 返回上个图谱」改为图谱上方悬浮按钮
   });
 
   canvas.addEventListener("wheel", function (e) {
@@ -2697,6 +2810,12 @@ function graphInitEvents() {
     var factor = e.deltaY < 0 ? 1.1 : 0.9;
     graphZoom = Math.min(3, Math.max(0.4, graphZoom * factor));
   }, { passive: false });
+
+  // 图谱上方悬浮按钮：复原视图比例 / 返回上个图谱
+  var btnResetView = $("#graph-reset-view");
+  if (btnResetView) btnResetView.addEventListener("click", function () { graphResetView(); });
+  var btnPrev = $("#graph-prev");
+  if (btnPrev) btnPrev.addEventListener("click", function () { graphRestorePrev(); });
 }
 
 function graphUpdateFilterTag() {
@@ -2939,6 +3058,28 @@ function graphFitAll() {
   graphViewLock = false;
 }
 
+// 复原视图：将「当前图谱显示的所有药草」（高亮层级 hi，含筛选/选中后可见的节点）整体居中铺满，确保全部可见
+function graphResetView() {
+  var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  graphNodes.forEach(function (n) {
+    if (graphNodeLevel(n) !== "hi") return;   // 仅纳入当前可见节点
+    var nr = graphNodeRadius(n);
+    minX = Math.min(minX, n.x - nr); minY = Math.min(minY, n.y - nr);
+    maxX = Math.max(maxX, n.x + nr); maxY = Math.max(maxY, n.y + nr);
+  });
+  if (minX === Infinity) return;
+  var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  var bw = Math.max(maxX - minX, 60), bh = Math.max(maxY - minY, 60);
+  var W = 1040, H = 620, pad = 90;
+  var z = Math.min((W - pad * 2) / bw, (H - pad * 2) / bh, 2.2);
+  z = Math.max(0.5, z);
+  graphZoom = z;
+  graphPanX = W / 2 - cx * z;
+  graphPanY = H / 2 - cy * z;
+  graphViewLock = false;
+  graphDraw();
+}
+
 function graphLoop() {
   // A 级 · 降级：用户偏好减少动效时，仅绘制一帧静态图，停止动画循环（防动晕 + 省电）
   var reduceMotion = window.matchMedia &&
@@ -2956,6 +3097,7 @@ function graphLoop() {
 // 无论此前是否处于某药材的关联子图，点空白都回到全体药材，并按当前筛选条件
 // 显示命中药材（有筛选则聚焦筛选结果，无筛选则铺满全图）。
 function graphRestorePrev() {
+  graphHideDetail();   // 离开聚焦药材，隐藏知识卡片
   if (!graphDataAll) return false;
   if (graphData === graphDataAll && !graphSelected) {
     // 已在全体图且无选中：仅复位视图即可，无需重建
@@ -3047,11 +3189,13 @@ $("[data-graph-load]").addEventListener("click", function () {
     .filter(function (s) { return s; });
   // 搜索新药材即从药材关联视图/筛选暂存中离开，解除条件屏蔽
   graphFilterLocked = false; graphFiltersBak = null;
+  graphHideDetail();   // 切换聚焦药材，隐藏旧知识卡片
   loadGraph(names.length === 1 ? names[0] : names);
 });
 $("[data-graph-all]").addEventListener("click", function () {
   $("#graph-focus").value = "";
   graphFilterLocked = false; graphFiltersBak = null;
+  graphHideDetail();   // 回到全图，无当前药材，隐藏知识卡片
   loadGraph("");
 });
 $("#graph-focus").addEventListener("keydown", function (e) {

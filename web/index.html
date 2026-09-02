@@ -71,50 +71,61 @@
   <section id="recognize" class="module module-recognize" role="tabpanel" data-bg="bg-recognize">
     <div class="module-head">
       <h2>图片识别</h2>
-      <p class="module-desc">上传药材图片，AI 给出 Top-5 识别结果与药性、配伍等完整档案。</p>
+      <p class="module-desc">上传一张或多张药材图片，AI 分别为每张图给出 Top-5 识别结果与药性、配伍等完整档案；支持对指定图片框选区域识别。</p>
     </div>
 
     <!-- 双栏工作台：左=上传+预览，右=识别档案 -->
     <div class="rec-workbench">
       <aside class="rec-pane rec-pane-left">
         <div class="uploader" data-uploader="recognize">
-          <input type="file" accept="image/*" hidden data-file-input>
+          <input type="file" accept="image/*" multiple hidden data-file-input>
           <div class="uploader-drop" data-drop-zone>
             <div class="uploader-icon" aria-hidden="true"><img src="/images/_02/icons8-图片-25.png" alt=""></div>
             <div class="uploader-text">
-              <b>拖拽图片到此处</b>，或 <u data-click-hint>点击选择</u> · 支持 <u>Ctrl+V</u> 粘贴截图
+              <b>拖拽多张图片到此处</b>，或 <u data-click-hint>点击选择</u> · 支持 <u>Ctrl+V</u> 粘贴截图（可多选）
             </div>
             <div class="uploader-tip">示例：枸杞 / 黄芪 / 金银花 / 陈皮 等中草药照片</div>
           </div>
-          <div class="uploader-preview" hidden>
-            <div class="preview-stage">
-              <img id="recognize-preview-img" alt="">
-              <!-- 框选遮罩层：拖拽画矩形选择识别区域 -->
-              <div class="crop-overlay" id="crop-overlay" hidden>
-                <div class="crop-rect" id="crop-rect"></div>
-                <div class="crop-shade crop-shade-t"></div>
-                <div class="crop-shade crop-shade-b"></div>
-                <div class="crop-shade crop-shade-l"></div>
-                <div class="crop-shade crop-shade-r"></div>
+
+          <div class="rec-multi" id="rec-multi" hidden>
+            <!-- 已添加图片画廊（缩略图） -->
+            <div class="rec-gallery" id="rec-gallery"></div>
+
+            <!-- 主舞台：当前选中的图片 + 框选层 -->
+            <div class="uploader-preview" id="rec-preview">
+              <div class="preview-stage" id="preview-stage">
+                <img id="recognize-preview-img" alt="">
+                <!-- 框选遮罩层：拖拽画矩形选择识别区域 -->
+                <div class="crop-overlay" id="crop-overlay" hidden>
+                  <div class="crop-rect" id="crop-rect"></div>
+                  <div class="crop-shade crop-shade-t"></div>
+                  <div class="crop-shade crop-shade-b"></div>
+                  <div class="crop-shade crop-shade-l"></div>
+                  <div class="crop-shade crop-shade-r"></div>
+                </div>
+              </div>
+              <div class="rec-main-actions">
+                <button type="button" class="btn-ghost btn-sm" data-clear>清空全部</button>
+                <button type="button" class="btn-ghost btn-sm" data-add-more>＋ 继续添加</button>
               </div>
             </div>
-            <button type="button" class="btn-ghost btn-sm" data-clear>重新上传</button>
+
+            <!-- 框选模式操作 -->
+            <div class="crop-actions" id="crop-actions" hidden>
+              <button type="button" class="btn-ghost btn-sm" id="btn-crop" data-crop>选区</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-crop-confirm" data-crop-confirm hidden>添加选区</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-crop-cancel" data-crop-cancel hidden>取消选区</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-crop-clear" hidden>清除选框</button>
+            </div>
+            <div class="crop-hint" id="crop-hint" hidden>已进入选区模式：点击左侧某张图片，然后在图上拖拽框选区域</div>
+            <div class="crop-list" id="crop-list"></div>
           </div>
-          <!-- 框选操作按钮行（仅在已上传图片后出现） -->
-          <div class="crop-actions" id="crop-actions" hidden>
-            <button type="button" class="btn-ghost btn-sm" id="btn-crop" data-crop>框选区域</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-crop-confirm" data-crop-confirm hidden>添加选区</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-crop-cancel" data-crop-cancel hidden>取消框选</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-crop-clear" hidden>清除选框</button>
-          </div>
-          <!-- 已确认选区列表（可逐个删除） -->
-          <div class="crop-list" id="crop-list"></div>
         </div>
 
         <div class="field-row">
-          <!-- 无选区时：单一全局补充描述 -->
+          <!-- 无选区时：单一全局补充描述（作用于当前图片） -->
           <div id="recognize-text-global">
-            <label class="field-label" for="recognize-text">补充描述（可选）</label>
+            <label class="field-label" for="recognize-text">补充描述（可选 · 作用于当前图片）</label>
             <input id="recognize-text" class="text-input" type="text"
                    placeholder="叶片椭圆、表面有细毛、味甘" maxlength="100">
           </div>
@@ -123,7 +134,8 @@
         </div>
 
         <div class="action-row">
-          <button type="button" class="btn-primary" data-identify>开始识别</button>
+          <button type="button" class="btn-primary" data-identify>识别当前图片</button>
+          <button type="button" class="btn-ghost" data-identify-all>识别全部</button>
         </div>
         <p class="action-hint rec-hint">识别需加载本地模型，首次调用较慢，请耐心等待</p>
       </aside>
@@ -133,6 +145,7 @@
           <span class="rec-archive-title">识别档案</span>
           <span class="rec-archive-sub">Top-5 结果 · 药性 · 配伍</span>
         </div>
+        <div class="rec-result-tabs" id="rec-result-tabs" hidden></div>
         <div class="module-result rec-archive-body" id="recognize-result" hidden>
           <div class="result-loading" hidden><span class="spinner"></span> 正在识别中……</div>
           <div id="recognize-cards"></div>
@@ -147,7 +160,7 @@
               <path d="M14 21 L22 21 M14 26 L22 26 M30 21 L38 21 M30 26 L38 26"/>
             </svg>
           </div>
-          <p>上传图片并点击「开始识别」<br>药材档案将在此处展开</p>
+          <p>添加一张或多张药材图片<br>AI 将分别给出各自的识别结果与完整档案</p>
         </div>
       </div>
     </div>
@@ -317,13 +330,17 @@
 
     <div class="graph-stage">
       <canvas id="graph-canvas" width="1040" height="620"></canvas>
+      <div class="graph-float-tools">
+        <button type="button" class="graph-fab" id="graph-reset-view" title="复原视图比例（重置缩放并居中）">⤢ 复原视图</button>
+        <button type="button" class="graph-fab" id="graph-prev" title="返回上一个图谱（退出药材关联视图）">↩ 返回上个图谱</button>
+      </div>
       <div class="graph-info" id="graph-info"></div>
       <div class="graph-tip" id="graph-tip"></div>
     </div>
     <div class="graph-filter-tag" id="graph-filter-tag" hidden></div>
     <div class="graph-legend" id="graph-legend"></div>
     <div class="graph-hint">
-      提示：可拖拽节点 / 滚轮缩放 / 按住空白拖动平移；点击节点查看详情，点击空白处取消选中。
+      提示：可拖拽节点 / 滚轮缩放 / 按住空白拖动平移；点击节点查看详情。复原视图与返回图谱请使用图谱左上方悬浮按钮。
     </div>
   </section>
 

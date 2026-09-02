@@ -604,7 +604,8 @@ body.home-active .side-link.active {
   display: grid;
   grid-template-columns: minmax(320px, 400px) 1fr;
   gap: 20px;
-  align-items: start;
+  align-items: stretch;
+  height: calc(100vh - 56px);   /* 工作台占满视口，左右两栏各自独立滚动 */
 }
 .module-recognize .rec-pane {
   background: var(--card);
@@ -612,6 +613,29 @@ body.home-active .side-link.active {
   border-radius: 16px;
   padding: 20px;
   box-shadow: var(--shadow-soft);
+  min-height: 0;                /* 允许内部 overflow 生效 */
+}
+/* 左操作栏：整体独立滚动 */
+.module-recognize .rec-pane-left {
+  overflow-y: auto;
+}
+/* 右结果栏：头部与结果切换标签固定，仅结果区滚动 */
+.module-recognize .rec-pane-right {
+  overflow: hidden;
+}
+/* 细滚动条样式（左右两栏共用） */
+.module-recognize .rec-pane-left::-webkit-scrollbar,
+.module-recognize .rec-archive-body::-webkit-scrollbar {
+  width: 8px;
+}
+.module-recognize .rec-pane-left::-webkit-scrollbar-thumb,
+.module-recognize .rec-archive-body::-webkit-scrollbar-thumb {
+  background: rgba(169, 50, 38, 0.28);
+  border-radius: 8px;
+}
+.module-recognize .rec-pane-left::-webkit-scrollbar-thumb:hover,
+.module-recognize .rec-archive-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(169, 50, 38, 0.45);
 }
 .module-recognize .rec-pane-right {
   min-height: 440px;
@@ -633,7 +657,7 @@ body.home-active .side-link.active {
 .module-recognize .rec-archive-sub {
   font-size: 12px; color: var(--ink-soft); letter-spacing: .04em;
 }
-.module-recognize .rec-archive-body { flex: 1; }
+.module-recognize .rec-archive-body { flex: 1; min-height: 0; overflow-y: auto; }
 .module-recognize .rec-archive-empty {
   flex: 1; display: flex; flex-direction: column;
   align-items: center; justify-content: center;
@@ -660,6 +684,18 @@ body.home-active .side-link.active {
 @keyframes cardRise {
   from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 窄屏：双栏改为单栏堆叠，恢复整页滚动，避免固定高度挤压 */
+@media (max-width: 900px) {
+  .module-recognize .rec-workbench {
+    height: auto;
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+  .module-recognize .rec-pane-left { overflow: visible; }
+  .module-recognize .rec-pane-right { overflow: visible; min-height: 0; }
+  .module-recognize .rec-archive-body { overflow: visible; min-height: 0; }
 }
 
 /* —— 模块 2：特性检索 · 查询控制台 + 结果列 —— */
@@ -1100,6 +1136,117 @@ body.home-active .side-link.active {
 .zone-text-row { display: flex; flex-direction: column; gap: 6px; }
 .zone-text-row .field-label { font-size: 13px; color: var(--ink-soft); }
 .zone-text-row .text-input { width: 100%; }
+
+/* ===================== 多图识别：画廊 + 结果切换 ===================== */
+.rec-multi { margin-top: 4px; }
+
+/* 已添加图片缩略图画廊 */
+.rec-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.rec-thumb {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid var(--hairline);
+  background: var(--panel, #f3efe4);
+  cursor: pointer;
+  transition: border-color .15s, transform .12s, box-shadow .15s;
+}
+.rec-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rec-thumb:hover { transform: translateY(-2px); }
+.rec-thumb.active {
+  border-color: var(--vermilion);
+  box-shadow: 0 0 0 3px rgba(176, 58, 46, 0.18);
+}
+.rec-thumb-no {
+  position: absolute;
+  left: 4px; bottom: 4px;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: #fff;
+  background: rgba(31, 61, 46, 0.82);
+  border-radius: 6px;
+}
+.rec-thumb-dot {
+  position: absolute; right: 4px; top: 4px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--jade, #2e8b6f);
+  box-shadow: 0 0 0 2px #fff;
+}
+.rec-thumb-del {
+  position: absolute; right: 3px; top: 3px;
+  width: 18px; height: 18px; line-height: 16px;
+  border: none; border-radius: 50%;
+  background: rgba(20, 16, 14, 0.55); color: #fff;
+  cursor: pointer; font-size: 13px; padding: 0;
+  opacity: 0; transition: opacity .12s;
+}
+.rec-thumb:hover .rec-thumb-del { opacity: 1; }
+.rec-thumb-del:hover { background: var(--vermilion); }
+
+/* 主舞台操作行 */
+.rec-main-actions {
+  display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;
+}
+
+/* 框选模式提示 */
+.crop-hint {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--vermilion-deep);
+  background: rgba(176, 58, 46, 0.08);
+  border: 1px dashed rgba(176, 58, 46, 0.4);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.crop-hint[hidden] { display: none; }
+
+/* 结果区切换标签（查看哪张图片） */
+.rec-result-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.rec-result-tabs[hidden] { display: none; }
+.rec-result-tabs-label {
+  font-size: 13px; color: var(--ink-soft);
+}
+.rec-result-tab {
+  min-width: 34px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all .12s;
+}
+.rec-result-tab:hover { border-color: var(--vermilion); }
+.rec-result-tab.active {
+  background: var(--vermilion);
+  border-color: var(--vermilion);
+  color: #fff;
+}
+
+/* 未识别图片的查看提示 */
+.rec-view-hint {
+  padding: 18px;
+  font-size: 14px;
+  color: var(--ink-soft);
+  background: rgba(31, 61, 46, 0.05);
+  border: 1px dashed var(--hairline);
+  border-radius: 10px;
+}
 
 /* 结果卡中回显该选区的补充描述 */
 .zone-text-echo {
@@ -1567,8 +1714,8 @@ body.home-active .side-link.active {
   appearance: none;
   width: 40px; height: 40px;
   font-size: 18px;
-  background: var(--paper);
-  border: 1px solid var(--line-strong);
+  background: var(--card);
+  border: 1px solid var(--hairline);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s;
@@ -1593,8 +1740,8 @@ body.home-active .side-link.active {
   font-family: var(--sans);
   font-size: 14px;
   color: var(--ink);
-  background: var(--paper);
-  border: 1px solid var(--line-strong);
+  background: var(--card);
+  border: 1px solid var(--hairline);
   border-radius: 6px;
   padding: 9px 12px;
   resize: none;
@@ -1656,6 +1803,33 @@ body.home-active .side-link.active {
 #graph-canvas { display: block; width: 100%; height: auto; cursor: grab; }
 #graph-canvas.dragging { cursor: grabbing; }
 
+/* 图谱上方悬浮按钮：复原视图比例 / 返回上个图谱（置于左上，避开右上详情面板） */
+.graph-float-tools {
+  position: absolute;
+  top: 12px; left: 12px;
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+}
+.graph-fab {
+  font-family: var(--serif);
+  font-size: 13px;
+  color: var(--ink);
+  background: rgba(255, 253, 248, 0.95);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  box-shadow: var(--shadow-soft);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.graph-fab:hover {
+  background: var(--vermilion);
+  border-color: var(--vermilion);
+  color: #fff;
+}
+.graph-fab:active { transform: translateY(1px); }
+
 .graph-info {
   position: absolute;
   top: 12px; right: 12px;
@@ -1711,7 +1885,7 @@ body.home-active .side-link.active {
   gap: 10px 18px;
   align-items: center;
   margin-top: 10px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--ink-soft);
 }
 
@@ -1722,7 +1896,7 @@ body.home-active .side-link.active {
   gap: 8px;
   margin: 6px 0 2px;
   padding: 5px 12px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--ink);
   background: rgba(169, 50, 38, 0.08);
   border: 1px solid rgba(140, 42, 31, 0.25);
@@ -1759,7 +1933,7 @@ body.home-active .side-link.active {
   font: inherit;
   color: var(--ink-soft);
   cursor: pointer;
-  padding: 2px 8px;
+  padding: 3px 9px;
   border-radius: 20px;
   transition: all 0.16s ease;
 }
@@ -1792,7 +1966,7 @@ body.home-active .side-link.active {
   box-shadow: 0 4px 16px rgba(20, 18, 14, 0.08);
 }
 .graph-legend .leg-group-title {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 800;                        /* 小标题加粗 */
   letter-spacing: 0.04em;
   color: var(--ink-soft);
@@ -1803,10 +1977,10 @@ body.home-active .side-link.active {
 /* 药性内部维度子组 */
 .graph-legend .leg-sub { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 6px; }
 .graph-legend .leg-sub + .leg-sub { border-top: 1px dashed rgba(38, 36, 31, 0.12); padding-top: 6px; }
-.graph-legend .leg-sub-title { font-size: 11px; color: rgba(38, 36, 31, 0.55); font-weight: 600; }
+.graph-legend .leg-sub-title { font-size: 13px; color: rgba(38, 36, 31, 0.55); font-weight: 600; }
 .graph-legend .leg-prop em,
 .graph-legend .leg-tox em,
-.graph-legend .leg-mer em { font-style: normal; font-size: 10px; opacity: 0.55; margin-left: 2px; }
+.graph-legend .leg-mer em { font-style: normal; font-size: 12px; opacity: 0.55; margin-left: 2px; }
 
 /* 药性 / 毒性 / 归经 可点击筛选按钮（通用 item 风格） */
 .graph-legend .leg-prop,
@@ -1818,7 +1992,7 @@ body.home-active .side-link.active {
   font: inherit;
   color: var(--ink-soft);
   cursor: pointer;
-  padding: 2px 9px;
+  padding: 3px 11px;
   border-radius: 20px;
   transition: all 0.16s ease;
 }
@@ -1848,7 +2022,7 @@ body.home-active .side-link.active {
   font: inherit;
   color: var(--ink-soft);
   cursor: pointer;
-  padding: 3px 12px;
+  padding: 4px 13px;
   border-radius: 20px;
   font-weight: 600;
   transition: all 0.16s ease;
@@ -2405,3 +2579,49 @@ body.home-active .tcm-disclaimer {
   transition: opacity .2s ease, transform .2s ease;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ============================================================
+   全局阅读性放大：统一上调各模块正文/控件字号（便于阅读）
+   放置于文件末尾，按源码顺序覆盖同权重类选择器
+   ============================================================ */
+/* 通用：模块说明、表单标签、输入框、按钮、提示 */
+.module-desc { font-size: 15px; }
+.field-label { font-size: 14px; }
+.zone-text-row .field-label { font-size: 14px; }
+.text-input { font-size: 15px; }
+.btn { font-size: 15px; }
+.btn-sm { font-size: 13px; }
+.action-hint { font-size: 13px; }
+.tab { font-size: 16px; }
+
+/* 首页 */
+.module-home .home-eyebrow { font-size: 14px; }
+.module-home .home-sub { font-size: 16px; }
+
+/* 图片识别模块 */
+.uploader-text { font-size: 15px; }
+.result-loading { font-size: 15px; }
+.rec-archive-sub { font-size: 13px; }
+.rec-meta { font-size: 13px; }
+.rec-prop { font-size: 14px; }
+.rec-desc { font-size: 14px; }
+.detail-line { font-size: 14px; }
+.detail-muted { font-size: 13px; }
+
+/* AI 对话模块 */
+.msg { font-size: 15px; }
+.chat-input { font-size: 15px; }
+.btn-attach { font-size: 14px; }
+.btn-ghost { font-size: 14px; }
+.export-chat-hint { font-size: 14px; }
+.export-item { font-size: 14px; }
+.export-format-label { font-size: 14px; }
+
+/* 关系图谱模块 */
+.graph-legend { font-size: 15px; }
+.graph-hint { font-size: 13px; }
+
+/* 收藏夹 / 轻提示 */
+.fav-empty-hint { font-size: 13px; }
+.fav-card-sub { font-size: 13.5px; }
+.toast { font-size: 14.5px; }
