@@ -14,10 +14,13 @@
 依赖:
     pip install fastapi uvicorn python-multipart
 """
+import base64
 import io
 import json
 import os
+import re
 import sys
+import uuid
 from urllib.parse import quote
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,8 +30,8 @@ if ROOT not in sys.path:
 import numpy as np
 import uvicorn
 from typing import List
-from fastapi import FastAPI, File, Form, UploadFile, Body, Query
-from fastapi.responses import Response
+from fastapi import FastAPI, File, Form, UploadFile, Body, Query, Path
+from fastapi.responses import Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
@@ -588,6 +591,338 @@ def export_chat_pdf(messages: list = Body(...)):
     return FileResponse(path, media_type="application/pdf",
                         filename="本草对话导出.pdf",
                         background=BackgroundTask(_cleanup))
+
+# ---------------------------------------------------------------
+# 导出图片识别结果为 PDF / Word 文件（对照对话导出，复用中文渲染）
+# ---------------------------------------------------------------
+def _cjk_font_path():
+    for cand in ("C:/Windows/Fonts/msyh.ttc",
+                 "C:/Windows/Fonts/simhei.ttf",
+                 "C:/Windows/Fonts/simsun.ttc",
+                 "C:/Windows/Fonts/simkai.ttf",
+                 "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"):
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def _decode_images(images):
+    """将 data: URL 列表解码为 (BytesIO, width, height)。"""
+    out = []
+    for url in (images or []):
+        try:
+            if "," in url:
+                b64 = url.split(",", 1)[1]
+            else:
+                b64 = url
+            raw = base64.b64decode(b64)
+            bio = io.BytesIO(raw)
+            w = h = None
+            try:
+                _im = Image.open(bio)
+                w, h = _im.size
+                bio.seek(0)
+            except Exception:
+                pass
+            out.append((bio, w, h))
+        except Exception:
+            continue
+    return out
+
+
+@app.post("/api/export_recog_pdf")
+def export_recog_pdf(payload: dict = Body(None)):
+    from fpdf import FPDF
+    import tempfile
+    from starlette.background import BackgroundTask
+
+    cn_font = _cjk_font_path()
+    if not cn_font:
+        return JSONResponse(status_code=500,
+                             content={"error": "未找到系统中文字体，无法生成 PDF"})
+
+    payload = payload or {}
+    items = payload.get("items", []) or []
+    title = payload.get("title", "本草识鉴 · 图片识别结果")
+
+    class RecogPDF(FPDF):
+        def footer(self):
+            self.set_y(-12)
+            self.set_font("cn", size=8)
+            self.set_text_color(150, 150, 150)
+            self.cell(0, 8, "本草识鉴 · 识别结果导出  -  第 %d 页" % self.page_no(),
+                      align="C")
+
+    pdf = RecogPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=16)
+    pdf.add_font("cn", "", cn_font)
+    pdf.add_font("cn", "B", cn_font)
+    pdf.set_margins(18, 16, 18)
+    pdf.add_page()
+
+    pdf.set_font("cn", "B", 15)
+    pdf.set_text_color(120, 50, 40)
+    pdf.multi_cell(0, 9, title, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(2)
+    pdf.set_draw_color(200, 160, 150)
+    pdf.line(18, pdf.get_y(), 192, pdf.get_y())
+    pdf.ln(4)
+
+    for it in items:
+        heading = it.get("heading", "")
+        images = it.get("images", []) or []
+        text = (it.get("text") or "").strip()
+        md = it.get("markdown", "") or ""
+        if heading:
+            pdf.set_font("cn", "B", 12.5)
+            pdf.set_text_color(90, 40, 30)
+            pdf.multi_cell(0, 7, heading, new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln(1)
+        for bio, w, h in _decode_images(images):
+            try:
+                max_w = 150
+                ih = max_w * h / w if (w and h) else 0
+                if ih and pdf.get_y() + ih > 281:  # 297 - 16 下边距
+                    pdf.add_page()
+                pdf.image(bio, w=max_w)
+                pdf.ln(2)
+            except Exception:
+                pass
+        if text:
+            pdf.set_font("cn", "", 10)
+            pdf.set_text_color(90, 90, 90)
+            pdf.multi_cell(0, 5.4, text, markdown=True,
+                           new_x="LMARGIN", new_y="NEXT")
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln(1)
+        if md:
+            pdf.set_font("cn", "", 10.5)
+            pdf.multi_cell(0, 5.6, md, markdown=True,
+                           new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(3)
+        y = pdf.get_y()
+        pdf.set_draw_color(225, 225, 225)
+        pdf.line(18, y, 192, y)
+        pdf.ln(4)
+
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    os.close(fd)
+    pdf.output(path)
+    return FileResponse(path, media_type="application/pdf",
+                        filename="本草识别结果导出.pdf",
+                        background=BackgroundTask(
+                            lambda p=path: os.remove(p) if os.path.exists(p) else None))
+
+
+@app.post("/api/export_recog_docx")
+def export_recog_docx(payload: dict = Body(None)):
+    import tempfile
+    from starlette.background import BackgroundTask
+    try:
+        from docx import Document
+        from docx.shared import Pt, Cm
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+    except Exception as e:  # noqa: F841
+        return JSONResponse(status_code=500,
+                             content={"error": "未安装 python-docx，无法生成 Word 文件"})
+
+    payload = payload or {}
+    items = payload.get("items", []) or []
+    title = payload.get("title", "本草识鉴 · 图片识别结果")
+
+    doc = Document()
+    normal = doc.styles["Normal"]
+    normal.font.name = "宋体"
+    normal.font.size = Pt(10.5)
+    doc.add_heading(title, level=0)
+
+    for it in items:
+        heading = it.get("heading", "")
+        images = it.get("images", []) or []
+        text = (it.get("text") or "").strip()
+        md = it.get("markdown", "") or ""
+        if heading:
+            doc.add_heading(heading, level=1)
+        for bio, w, h in _decode_images(images):
+            try:
+                doc.add_picture(bio, width=Cm(13))
+            except Exception:
+                pass
+        if text:
+            p = doc.add_paragraph()
+            r = p.add_run(text)
+            r.italic = True
+        if md:
+            _add_markdown_docx(doc, md)
+        doc.add_paragraph("")
+
+    fd, path = tempfile.mkstemp(suffix=".docx")
+    os.close(fd)
+    doc.save(path)
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument."
+                   "wordprocessingml.document",
+        filename="本草识别结果导出.docx",
+        background=BackgroundTask(
+            lambda p=path: os.remove(p) if os.path.exists(p) else None))
+
+
+def _add_markdown_docx(doc, md):
+    """极简 markdown -> docx：标题 / 列表 / 引用 / 行内粗斜体。"""
+    def add_inline(par, text):
+        # 处理 **粗体** 与 *斜体*（贪心，按段拆分）
+        parts = []
+        buf = ""
+        i = 0
+        while i < len(text):
+            if text.startswith("**", i):
+                if buf:
+                    parts.append((buf, None)); buf = ""
+                j = text.find("**", i + 2)
+                if j == -1:
+                    buf += text[i:]; break
+                parts.append((text[i + 2:j], "B")); i = j + 2
+            elif text.startswith("*", i):
+                if buf:
+                    parts.append((buf, None)); buf = ""
+                j = text.find("*", i + 1)
+                if j == -1:
+                    buf += text[i:]; break
+                parts.append((text[i + 1:j], "I")); i = j + 1
+            elif text.startswith("`", i):
+                if buf:
+                    parts.append((buf, None)); buf = ""
+                j = text.find("`", i + 1)
+                if j == -1:
+                    buf += text[i:]; break
+                parts.append((text[i + 1:j], "C")); i = j + 1
+            else:
+                buf += text[i]; i += 1
+        if buf:
+            parts.append((buf, None))
+        for seg, kind in parts:
+            if not seg:
+                continue
+            run = par.add_run(seg)
+            if kind == "B":
+                run.bold = True
+            elif kind == "I":
+                run.italic = True
+        return parts
+
+    for line in (md or "").split("\n"):
+        s = line.rstrip()
+        if not s.strip():
+            continue
+        if s.startswith("### "):
+            doc.add_heading(s[4:].strip(), level=3)
+        elif s.startswith("## "):
+            doc.add_heading(s[3:].strip(), level=2)
+        elif s.startswith("# "):
+            doc.add_heading(s[2:].strip(), level=1)
+        elif s.startswith("> "):
+            p = doc.add_paragraph()
+            r = p.add_run(s[2:].strip())
+            r.italic = True
+        elif s.startswith("- ") or s.startswith("* "):
+            p = doc.add_paragraph(style="List Bullet")
+            add_inline(p, s[2:].strip())
+        else:
+            p = doc.add_paragraph()
+            add_inline(p, s)
+
+
+# ====================== 用户增补药材库（本草补遗库） ======================
+USER_HERB_IMG_DIR = os.path.join(WEB_DIR, "user_herb_images")
+
+
+def _save_user_herb_image(data_url: str):
+    """把前端传来的 base64 图片落盘到 web/user_herb_images，返回可访问的相对 URL。"""
+    if not data_url:
+        return None
+    m = re.match(r"data:image/(\w+);base64,(.+)", data_url, re.S)
+    if not m:
+        return None
+    ext = m.group(1).lower()
+    if ext == "jpeg":
+        ext = "jpg"
+    try:
+        raw = base64.b64decode(m.group(2))
+    except Exception:
+        return None
+    os.makedirs(USER_HERB_IMG_DIR, exist_ok=True)
+    fname = uuid.uuid4().hex + "." + ext
+    with open(os.path.join(USER_HERB_IMG_DIR, fname), "wb") as f:
+        f.write(raw)
+    return "/user_herb_images/" + fname
+
+
+def _build_user_herb_record(payload: dict, image_url):
+    aliases = payload.get("aliases") or []
+    if isinstance(aliases, str):
+        aliases = [a.strip() for a in
+                   re.split(r"[，,、;；\s]+", aliases) if a.strip()]
+    return {
+        "name": (payload.get("name") or "").strip(),
+        "property": (payload.get("property") or "").strip(),
+        "meridian": (payload.get("meridian") or "").strip(),
+        "function": (payload.get("function") or "").strip(),
+        "aliases": aliases,
+        "indications": (payload.get("indications") or "").strip(),
+        "cautions": (payload.get("cautions") or "").strip(),
+        "paired_herb": (payload.get("paired_herb") or "").strip(),
+        "image": image_url,
+    }
+
+
+@app.get("/api/user_herbs")
+def api_list_user_herbs():
+    demo = get_demo()
+    return {"herbs": demo.kg.list_user_herbs()}
+
+
+@app.post("/api/user_herbs")
+def api_add_user_herb(payload: dict = Body(...)):
+    demo = get_demo()
+    if not (payload.get("name") or "").strip():
+        return JSONResponse(status_code=400, content={"error": "请填写药名"})
+    image_url = _save_user_herb_image(payload.get("image")) if payload.get("image") else None
+    record = _build_user_herb_record(payload, image_url)
+    try:
+        demo.kg.add_user_herb(record)
+    except ValueError as e:
+        return JSONResponse(status_code=409, content={"error": str(e)})
+    return {"ok": True, "herb": record}
+
+
+@app.put("/api/user_herbs/{name}")
+def api_update_user_herb(name: str = Path(...), payload: dict = Body(...)):
+    demo = get_demo()
+    if not (payload.get("name") or "").strip():
+        payload["name"] = name
+    existing = demo.kg.get_user_herb(name)
+    image_url = _save_user_herb_image(payload.get("image")) if payload.get("image") \
+        else (existing.get("image") if existing else None)
+    record = _build_user_herb_record(payload, image_url)
+    try:
+        demo.kg.update_user_herb(name, record)
+    except ValueError as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
+    return {"ok": True, "herb": record}
+
+
+@app.delete("/api/user_herbs/{name}")
+def api_delete_user_herb(name: str = Path(...)):
+    demo = get_demo()
+    ok = demo.kg.delete_user_herb(name)
+    if not ok:
+        return JSONResponse(status_code=404, content={"error": "未找到该药材"})
+    return {"ok": True}
+
 
 # 挂载静态前端（须在 API 路由定义之后，避免覆盖 /predict 等接口）
 if os.path.isdir(WEB_DIR):

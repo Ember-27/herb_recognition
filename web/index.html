@@ -144,6 +144,7 @@
         <div class="rec-archive-head">
           <span class="rec-archive-title">识别档案</span>
           <span class="rec-archive-sub">Top-5 结果 · 药性 · 配伍</span>
+          <button type="button" class="rec-export-btn" id="btn-recog-export" hidden>⬇ 导出结果</button>
         </div>
         <div class="rec-result-tabs" id="rec-result-tabs" hidden></div>
         <div class="module-result rec-archive-body" id="recognize-result" hidden>
@@ -186,6 +187,7 @@
           <option value="味甘 归肾经 固精缩尿"></option>
         </datalist>
         <button type="button" class="btn-primary" data-search>检索</button>
+        <button type="button" class="btn-ghost" id="btn-search-export" hidden>⬇ 导出检索结果</button>
       </div>
       <div class="search-chips" id="search-chips">
         <span class="search-chip-eg" data-eg="性味甘 归肝经 清肝明目">清肝明目</span>
@@ -326,6 +328,7 @@
       <datalist id="graph-herbs"></datalist>
       <button type="button" class="btn-primary" data-graph-load>查看图谱</button>
       <button type="button" class="btn-ghost" data-graph-all>全图浏览</button>
+      <button type="button" class="btn-ghost" id="btn-user-herb-lib">本草补遗库</button>
     </div>
 
     <div class="graph-stage">
@@ -335,6 +338,13 @@
         <button type="button" class="graph-fab" id="graph-prev" title="返回上一个图谱（退出药材关联视图）">↩ 返回上个图谱</button>
       </div>
       <div class="graph-info" id="graph-info"></div>
+      <div class="graph-notfound" id="graph-notfound" hidden>
+        <div class="graph-notfound-text" id="graph-notfound-text"></div>
+        <div class="graph-notfound-actions">
+          <button type="button" class="btn-primary" id="graph-notfound-add">去添加</button>
+          <button type="button" class="fav-mini-btn" id="graph-notfound-close">忽略</button>
+        </div>
+      </div>
       <div class="graph-tip" id="graph-tip"></div>
     </div>
     <div class="graph-filter-tag" id="graph-filter-tag" hidden></div>
@@ -445,6 +455,138 @@
 </div>
 <!-- 打印用容器（仅导出 PDF 时填充并显示） -->
 <div id="exportPrintArea" class="export-print-area" hidden></div>
+
+<!-- 导出识别结果弹窗 -->
+<div id="exportRecog" class="export-chat" hidden>
+  <div class="export-chat-card">
+    <div class="export-chat-head">
+      <span class="export-chat-title">导出识别结果</span>
+      <button type="button" class="export-chat-close" data-recog-export-close aria-label="关闭">×</button>
+    </div>
+    <div class="export-chat-body">
+      <div class="export-chat-hint">勾选要导出的图片或选区（原图与分区、文字描述及识别结果会一并导出），选择导出形式后点击导出。</div>
+      <div class="export-chat-actions-top">
+        <button type="button" class="fav-mini-btn" data-recog-export-all>全选</button>
+        <button type="button" class="fav-mini-btn" data-recog-export-none>清空</button>
+      </div>
+      <div id="exportRecogList" class="export-chat-list"></div>
+      <div class="export-chat-filename">
+        <label class="export-format-label" for="recogExportName">文件名</label>
+        <input id="recogExportName" class="text-input" type="text"
+               placeholder="本草识别结果导出（可自定义）" maxlength="80">
+      </div>
+      <div class="export-chat-format">
+        <div class="export-format-label">导出形式</div>
+        <label class="export-format-opt"><input type="radio" name="recogExpFmt" value="markdown" checked> Markdown 文件 (.md)</label>
+        <label class="export-format-opt"><input type="radio" name="recogExpFmt" value="pdf"> PDF 文件 (.pdf)</label>
+        <label class="export-format-opt"><input type="radio" name="recogExpFmt" value="docx"> Word 文件 (.docx)</label>
+      </div>
+    </div>
+    <div class="export-chat-foot">
+      <button type="button" class="fav-mini-btn" data-recog-export-close>取消</button>
+      <button type="button" class="btn-primary" id="recogExportDo">导出</button>
+    </div>
+  </div>
+</div>
+
+<div id="exportSearch" class="export-chat" hidden>
+  <div class="export-chat-card">
+    <div class="export-chat-head">
+      <span class="export-chat-title">导出检索结果</span>
+      <button type="button" class="export-chat-close" data-search-export-close aria-label="关闭">×</button>
+    </div>
+    <div class="export-chat-body">
+      <div class="export-chat-hint">导出当前特性检索结果，选择导出形式后点击导出。</div>
+      <div class="export-chat-filename">
+        <label class="export-format-label" for="searchExportName">文件名</label>
+        <input id="searchExportName" class="text-input" type="text"
+               placeholder="本草检索结果导出（可自定义）" maxlength="80">
+      </div>
+      <div class="export-chat-format">
+        <div class="export-format-label">导出形式</div>
+        <label class="export-format-opt"><input type="radio" name="searchExpFmt" value="markdown" checked> Markdown 文件 (.md)</label>
+        <label class="export-format-opt"><input type="radio" name="searchExpFmt" value="pdf"> PDF 文件 (.pdf)</label>
+        <label class="export-format-opt"><input type="radio" name="searchExpFmt" value="docx"> Word 文件 (.docx)</label>
+      </div>
+    </div>
+    <div class="export-chat-foot">
+      <button type="button" class="fav-mini-btn" data-search-export-close>取消</button>
+      <button type="button" class="btn-primary" id="searchExportDo">导出</button>
+    </div>
+  </div>
+</div>
+
+<div id="userHerbForm" class="export-chat" hidden>
+  <div class="export-chat-card user-herb-card">
+    <div class="export-chat-head">
+      <span class="export-chat-title" id="userHerbFormTitle">添加药材（本草补遗库）</span>
+      <button type="button" class="export-chat-close" data-user-herb-form-close aria-label="关闭">×</button>
+    </div>
+    <div class="export-chat-body">
+      <div class="uh-field">
+        <label class="field-label" for="uhName">药名 *</label>
+        <input id="uhName" class="text-input" type="text" placeholder="如：绞股蓝" maxlength="40">
+      </div>
+      <div class="uh-row">
+        <div class="uh-field">
+          <label class="field-label" for="uhProperty">性味</label>
+          <input id="uhProperty" class="text-input" type="text" placeholder="如：甘、苦，微寒">
+        </div>
+        <div class="uh-field">
+          <label class="field-label" for="uhMeridian">归经</label>
+          <input id="uhMeridian" class="text-input" type="text" placeholder="如：肺、脾、肾经">
+        </div>
+      </div>
+      <div class="uh-field">
+        <label class="field-label" for="uhFunction">功效</label>
+        <textarea id="uhFunction" class="text-input" rows="2" placeholder="如：清热解毒、益气健脾"></textarea>
+      </div>
+      <div class="uh-field">
+        <label class="field-label" for="uhAliases">别名</label>
+        <input id="uhAliases" class="text-input" type="text" placeholder="多个用、或逗号分隔">
+      </div>
+      <div class="uh-field">
+        <label class="field-label" for="uhIndications">适用病症</label>
+        <textarea id="uhIndications" class="text-input" rows="2" placeholder="如：咳嗽痰多、体虚乏力"></textarea>
+      </div>
+      <div class="uh-field">
+        <label class="field-label" for="uhCautions">个体禁忌</label>
+        <textarea id="uhCautions" class="text-input" rows="2" placeholder="如：脾胃虚寒者慎用"></textarea>
+      </div>
+      <div class="uh-field">
+        <label class="field-label" for="uhPaired">常用配伍</label>
+        <input id="uhPaired" class="text-input" type="text" placeholder="如：枸杞（相须相使的药材）">
+      </div>
+      <div class="uh-field">
+        <label class="field-label" for="uhImage">图片</label>
+        <input id="uhImage" class="uh-file" type="file" accept="image/*">
+        <img id="uhImagePreview" class="uh-image-preview" alt="" hidden>
+      </div>
+      <div class="uh-hint">药名、性味、归经、功效将用于特性检索与图谱关联；毒性依据性味自动判定。</div>
+    </div>
+    <div class="export-chat-foot">
+      <button type="button" class="fav-mini-btn" data-user-herb-form-close>取消</button>
+      <button type="button" class="btn-primary" id="userHerbSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="userHerbLib" class="export-chat" hidden>
+  <div class="export-chat-card">
+    <div class="export-chat-head">
+      <span class="export-chat-title">本草补遗库（用户增补药材）</span>
+      <button type="button" class="export-chat-close" data-user-herb-lib-close aria-label="关闭">×</button>
+    </div>
+    <div class="export-chat-body">
+      <div class="export-chat-hint">这里收录你自行增补的药材，可在图谱与检索中直接使用；可随时编辑或删除。</div>
+      <button type="button" class="btn-primary" id="userHerbAddNew">+ 新增药材</button>
+      <div id="userHerbLibList" class="user-herb-list"></div>
+    </div>
+    <div class="export-chat-foot">
+      <button type="button" class="fav-mini-btn" data-user-herb-lib-close>关闭</button>
+    </div>
+  </div>
+</div>
 
 <script src="app.js"></script>
 </body>

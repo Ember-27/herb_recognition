@@ -657,6 +657,26 @@ body.home-active .side-link.active {
 .module-recognize .rec-archive-sub {
   font-size: 12px; color: var(--ink-soft); letter-spacing: .04em;
 }
+.module-recognize .rec-export-btn {
+  margin-left: auto;
+  appearance: none;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--vermilion);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.module-recognize .rec-export-btn:hover {
+  background: var(--vermilion);
+  color: #fff;
+  border-color: var(--vermilion);
+}
 .module-recognize .rec-archive-body { flex: 1; min-height: 0; overflow-y: auto; }
 .module-recognize .rec-archive-empty {
   flex: 1; display: flex; flex-direction: column;
@@ -2250,6 +2270,7 @@ body.home-active .tcm-disclaimer {
 .export-chat-hint { font-size: 13px; color: var(--ink-soft); margin-bottom: 10px; }
 .export-chat-actions-top { display: flex; gap: 8px; margin-bottom: 8px; }
 .export-chat-list { display: flex; flex-direction: column; gap: 6px; max-height: 38vh; overflow-y: auto; }
+.export-chat-item-sub { padding-left: 22px; font-size: 13px; color: var(--ink-soft); }
 .export-item {
   display: flex; align-items: flex-start; gap: 10px;
   padding: 8px 10px; border: 1px solid var(--line);
@@ -2262,6 +2283,8 @@ body.home-active .tcm-disclaimer {
 .export-cb { margin-top: 3px; }
 .export-item-text { color: var(--ink); line-height: 1.5; }
 .export-chat-format { margin-top: 16px; border-top: 1px dashed var(--line); padding-top: 14px; }
+.export-chat-filename { margin-top: 14px; }
+.export-chat-filename .text-input { width: 100%; box-sizing: border-box; }
 .export-format-label { font-size: 13px; color: var(--ink-soft); margin-bottom: 8px; }
 .export-format-opt {
   display: flex; align-items: center; gap: 8px;
@@ -2281,6 +2304,60 @@ body.home-active .tcm-disclaimer {
 .ep-assistant { background: #fff; }
 .ep-role { font-size: 12px; font-weight: 600; color: #8a6d3b; margin-bottom: 4px; }
 
+
+/* ============================================================
+   用户增补药材库（本草补遗库）
+   ============================================================ */
+.graph-notfound {
+  position: absolute; top: 16px; left: 16px; right: 16px; z-index: 7;
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 14px 16px; box-shadow: 0 8px 24px rgba(60,40,20,.12);
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.graph-notfound-text { flex: 1; min-width: 200px; font-size: 14px; color: var(--ink); }
+.graph-notfound-text b { color: var(--vermilion); }
+.graph-notfound-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.graph-notfound[hidden] { display: none; }
+
+.user-herb-card { max-width: 560px; }
+.uh-field { margin-top: 12px; }
+.uh-field .field-label { display: block; font-size: 13px; color: var(--ink-soft); margin-bottom: 5px; }
+.uh-row { display: flex; gap: 14px; }
+.uh-row .uh-field { flex: 1; }
+.uh-file { width: 100%; font-size: 13px; }
+.uh-image-preview {
+  display: block; margin-top: 10px; max-width: 160px; max-height: 160px;
+  border-radius: 10px; border: 1px solid var(--line); object-fit: cover;
+}
+.uh-image-preview[hidden] { display: none; }
+.uh-hint { margin-top: 14px; font-size: 12px; color: var(--ink-soft); line-height: 1.6; }
+
+.user-herb-list { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+.user-herb-item {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper);
+}
+.user-herb-thumb {
+  width: 52px; height: 52px; border-radius: 10px; object-fit: cover; flex-shrink: 0;
+  background: var(--card); border: 1px solid var(--line);
+}
+.user-herb-thumb-empty {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--ink-soft);
+}
+.user-herb-info { flex: 1; min-width: 0; }
+.user-herb-name { font-weight: 600; color: var(--ink); font-size: 15px; }
+.user-herb-sub { font-size: 12px; color: var(--ink-soft); margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-herb-ops { display: flex; gap: 8px; flex-shrink: 0; }
+.user-herb-del { color: var(--vermilion); border-color: var(--vermilion); }
+.user-herb-del:hover { background: var(--vermilion); color: #fff; }
+.user-herb-empty, .user-herb-loading { font-size: 13px; color: var(--ink-soft); padding: 10px 2px; }
+
+.herb-detail-img {
+  width: 100%; max-width: 200px; max-height: 200px; object-fit: cover;
+  border-radius: 10px; margin-bottom: 10px; border: 1px solid var(--line);
+}
 
 /* ============================================================
    响应式补充：侧栏在工作台内为悬浮竖排，小屏转顶部横排

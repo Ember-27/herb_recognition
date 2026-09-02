@@ -605,6 +605,12 @@ function renderResult() {
   var img = getImg(uploadState.recognize.viewId);
   if (!img) { box.hidden = true; return; }
   box.hidden = false;
+  // 仅当存在已识别结果时显示导出按钮
+  var expBtn = recEl("btn-recog-export");
+  if (expBtn) {
+    var anyResult = uploadState.recognize.images.some(function (x) { return x.result; });
+    expBtn.hidden = !anyResult;
+  }
   if (!img.result) {
     cards.innerHTML = '<div class="rec-view-hint">图片 ' + (uploadState.recognize.images.indexOf(img) + 1) +
       ' 尚未识别，请在左侧点击它并「识别当前图片」。</div>';
@@ -781,7 +787,14 @@ function initCropMulti() {
   });
   btnConfirm.addEventListener("click", function () {
     if (!sel || sel.w < 8 || sel.h < 8) { alert("请先框选一个有效区域"); return; }
-    activeCropList().push({ x: sel.x, y: sel.y, w: sel.w, h: sel.h });
+    // 记录选区在原图中的自然像素坐标，便于导出时精确裁剪
+    var nat = null;
+    if (img && img.naturalWidth && img.clientWidth) {
+      var sx = img.naturalWidth / img.clientWidth;
+      var sy = img.naturalHeight / img.clientHeight;
+      nat = { x: sel.x * sx, y: sel.y * sy, w: sel.w * sx, h: sel.h * sy };
+    }
+    activeCropList().push({ x: sel.x, y: sel.y, w: sel.w, h: sel.h, nat: nat });
     renderCropList();
     if (btnClear) btnClear.hidden = false;
     sel = null; rect.style.cssText = "display:none"; refreshShades();
@@ -1502,12 +1515,124 @@ $("[data-search]").addEventListener("click", async function () {
   }
 });
 
+var lastSearchData = null;   // 最近一次特性检索结果
+
+function searchResultMarkdown(data) {
+  var res = (data && data.result) || {};
+  if (res.hint && !(res.full && res.full.length)) return res.hint + "\n";
+  var md = "";
+  if (res.name_hit) {
+    md += "## 按药材名检索\n\n" +
+      (res.name_query || []).join("、") + "（共 " + (res.full ? res.full.length : 0) + " 味）\n\n";
+    if (res.full && res.full.length) md += "### 检索到药材\n\n" + searchItemsMd(res.full) + "\n";
+    return md;
+  }
+  var parsed = res.parsed || {};
+  var condChips = [];
+  (parsed.flavor || []).concat(parsed.nature || []).forEach(function (w) { condChips.push(w); });
+  (parsed.meridian || []).forEach(function (w) { condChips.push(w); });
+  (parsed.function_kws || []).forEach(function (w) { condChips.push(w); });
+  md += "## 检索条件\n\n" + (condChips.join("、") || "未解析出有效条件") + "\n\n";
+  if (res.full && res.full.length) {
+    md += "### 完全匹配（" + res.full.length + "）\n\n" + searchItemsMd(res.full) + "\n";
+  }
+  if (res.partial && res.partial.length) {
+    md += "### 部分匹配（" + res.partial.length + "）\n\n" + searchItemsMd(res.partial) + "\n";
+  }
+  return md;
+}
+
+function searchItemsMd(items) {
+  return (items || []).map(function (it) {
+    var info = it.info || {};
+    var lines = [];
+    var name = cleanName(it.name);
+    var tox = (info.toxicity || it.toxicity) ? " ⚠毒性药材" : "";
+    lines.push("**" + name + "**" + tox);
+    var hitWords = [];
+    if (it.hits) {
+      Object.keys(it.hits).forEach(function (k) {
+        (it.hits[k] || []).forEach(function (w) { hitWords.push(k + "：" + w); });
+      });
+    }
+    if (hitWords.length) lines.push("匹配：" + hitWords.join("，"));
+    if (info.property) lines.push("药性：" + info.property);
+    if (info.meridian) lines.push("归经：" + info.meridian);
+    if (info.function) lines.push("功效：" + info.function);
+    lines.push("匹配度：" + it.score);
+    return "- " + lines.join("　");
+  }).join("\n");
+}
+
+function openSearchExport() {
+  if (!lastSearchData || !lastSearchData.result) { toast("暂无可导出的检索结果"); return; }
+  var box = recEl("exportSearch");
+  if (box) box.hidden = false;
+  var nameEl = recEl("searchExportName");
+  if (nameEl) nameEl.value = "";
+}
+
+function closeSearchExport() {
+  var box = recEl("exportSearch");
+  if (box) box.hidden = true;
+}
+
+function doSearchExport() {
+  if (!lastSearchData || !lastSearchData.result) { toast("暂无可导出的检索结果"); return; }
+  var fmt = (document.querySelector("input[name='searchExpFmt']:checked") || {}).value || "markdown";
+  var rawName = (recEl("searchExportName").value || "").trim();
+  var safeName = rawName.replace(/[\\/:*?"<>|]/g, "").trim() || "本草检索结果导出";
+  var title = "本草识鉴 · 特性检索结果";
+  var mdBody = searchResultMarkdown(lastSearchData);
+  if (fmt === "markdown") {
+    var md = "# " + title + "\n\n" + mdBody + "\n";
+    downloadBlob(new Blob([md], { type: "text/markdown;charset=utf-8" }), safeName + ".md");
+    closeSearchExport();
+    return;
+  }
+  // PDF / Word 复用通用导出端点（检索无图片，images 为空）
+  var payload = { title: title, items: [{ heading: "", images: [], text: "", markdown: mdBody }] };
+  var url = fmt === "pdf" ? "/api/export_recog_pdf" : "/api/export_recog_docx";
+  var fname = fmt === "pdf" ? safeName + ".pdf" : safeName + ".docx";
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  }).then(function (r) {
+    if (!r.ok) {
+      return r.json().then(function (j) { throw new Error(j.error || ("HTTP " + r.status)); },
+        function () { throw new Error("HTTP " + r.status); });
+    }
+    return r.blob();
+  }).then(function (blob) {
+    downloadBlob(blob, fname);
+    closeSearchExport();
+  }).catch(function (err) {
+    toast("导出失败：" + err.message);
+  });
+}
+
+function initSearchExport() {
+  var btn = recEl("btn-search-export");
+  if (btn) btn.addEventListener("click", openSearchExport);
+  var doBtn = recEl("searchExportDo");
+  if (doBtn) doBtn.addEventListener("click", doSearchExport);
+  document.querySelectorAll("[data-search-export-close]").forEach(function (el) {
+    el.addEventListener("click", closeSearchExport);
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closeSearchExport();
+  });
+}
+
 function renderSearch(data) {
   var resultBox = $("#search-result");
   var summaryEl = $("#search-summary");
   var fullEl = $("#search-full");
   var partialEl = $("#search-partial");
   resultBox.hidden = false;
+  lastSearchData = data;
+  if (recEl("btn-search-export")) recEl("btn-search-export").hidden = false;
   var res = data.result || {};
 
   if (res.hint && !(res.full && res.full.length)) {
@@ -2146,6 +2271,299 @@ function initExportChat() {
 initExportChat();
 
 /* ============================================================
+   模块 1（续）：图片识别结果导出（Markdown / PDF / Word）
+   - 手动勾选某张图片（整图，含原图+各分区）或某个选区
+   - 每条导出含：原图/分区图、文字描述（若有）、识别结果文字
+   ============================================================ */
+function fileToDataURL(file) {
+  return new Promise(function (res, rej) {
+    var fr = new FileReader();
+    fr.onload = function () { res(fr.result); };
+    fr.onerror = function () { rej(fr.error || new Error("读取文件失败")); };
+    fr.readAsDataURL(file);
+  });
+}
+
+function cropToDataURL(imgObj, c) {
+  return fileToDataURL(imgObj.file).then(function (src) {
+    return new Promise(function (res, rej) {
+      var im = new Image();
+      im.onload = function () {
+        var nat = c.nat;
+        var dx, dy, dw, dh;
+        if (nat) { dx = nat.x; dy = nat.y; dw = nat.w; dh = nat.h; }
+        else { dx = c.x; dy = c.y; dw = c.w; dh = c.h; } // 无自然坐标则退回显示坐标（1:1）
+        dx = Math.max(0, Math.min(dx, im.naturalWidth));
+        dy = Math.max(0, Math.min(dy, im.naturalHeight));
+        dw = Math.max(1, Math.min(Math.round(dw), Math.max(1, im.naturalWidth - dx)));
+        dh = Math.max(1, Math.min(Math.round(dh), Math.max(1, im.naturalHeight - dy)));
+        var canvas = document.createElement("canvas");
+        canvas.width = dw; canvas.height = dh;
+        canvas.getContext("2d").drawImage(im, dx, dy, dw, dh, 0, 0, dw, dh);
+        res(canvas.toDataURL("image/png"));
+      };
+      im.onerror = function () { rej(new Error("裁剪失败")); };
+      im.src = src;
+    });
+  });
+}
+
+function recogTop5Md(top5, lowConfidence) {
+  if (!top5 || !top5.length) return "_（无候选结果）_\n";
+  var lines = top5.map(function (c, i) {
+    var prob = (c.prob != null) ? (c.prob * 100).toFixed(1) + "%" : "—";
+    var tox = c.toxicity ? " ⚠毒性药材" : "";
+    return (i + 1) + ". **" + (c.name || "未知") + "**" + tox + "　置信度 " + prob;
+  });
+  if (lowConfidence) lines.push("\n> ⚠ 模型对该图置信度较低，结果仅供参考。");
+  return lines.join("\n") + "\n";
+}
+
+function recogConfusableMd(confusable) {
+  if (!confusable || !confusable.peer) return "_（无）_\n";
+  var s = "与 **" + confusable.peer + "** 外观相似";
+  if (confusable.reason) s += "：" + confusable.reason;
+  else s += "。";
+  return s + "\n";
+}
+
+function recogImageMarkdown(im) {
+  // 仅用于「无选区」的单图识别结果；含选区的图片由 buildRecogItems 拆分为原图 + 各选区分别导出
+  var res = im.result;
+  if (!res) return "";
+  var d = res.data || {};
+  var t1 = (d.top5 && d.top5[0]) || {};
+  var parts = ["## 识别结果\n"];
+  parts.push("**最可能：** " + (t1.name || "未知") +
+    (t1.prob != null ? "（置信度 " + (t1.prob * 100).toFixed(1) + "%）" : "") +
+    (t1.toxicity ? " ⚠毒性药材" : ""));
+  parts.push("\n### 候选药材（Top-5）\n" + recogTop5Md(d.top5, d.low_confidence));
+  parts.push("\n### 药性详情\n" + (d.kg_info || "_（暂无）_"));
+  parts.push("\n### 易混淆药材\n" + recogConfusableMd(d.confusable));
+  parts.push("");
+  return parts.join("\n");
+}
+
+function recogCropMarkdown(im, ci) {
+  var res = im.result;
+  if (!res || !res.multi) return "";
+  var z = (res.data.zones || [])[ci];
+  if (!z) return "";
+  var parts = ["## 选区 " + (ci + 1) + " · 识别结果\n"];
+  if (z.text) parts.push("> 补充描述：" + z.text + "\n");
+  var top1 = (z.top5 && z.top5[0]) || {};
+  parts.push("**最可能：** " + (top1.name || "未知") +
+    (top1.prob != null ? "（置信度 " + (top1.prob * 100).toFixed(1) + "%）" : "") +
+    (top1.toxicity ? " ⚠毒性药材" : ""));
+  parts.push("\n### 候选药材（Top-5）\n" + recogTop5Md(z.top5, z.low_confidence));
+  parts.push("\n### 药性详情\n" + (z.kg_info || "_（暂无）_"));
+  parts.push("\n### 易混淆药材\n" + recogConfusableMd(z.confusable));
+  parts.push("");
+  return parts.join("\n");
+}
+
+var recogExportMap = {}; // id -> {kind, imgId, cropIndex}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+
+function openRecogExport() {
+  var list = recEl("exportRecogList");
+  if (!list) return;
+  list.innerHTML = "";
+  var nameEl = recEl("recogExportName");
+  if (nameEl) nameEl.value = "";
+  recogExportMap = {};
+  var any = false;
+  uploadState.recognize.images.forEach(function (im, gi) {
+    if (!im.result) return;
+    any = true;
+    var imgLabel = "图片 " + (gi + 1) + (im.name ? "（" + im.name + "）" : "");
+    var idImg = "rexp-img-" + im.id;
+    recogExportMap[idImg] = { kind: "image", imgId: im.id };
+    var row = document.createElement("label");
+    row.className = "export-chat-item";
+    row.innerHTML = '<input type="checkbox" class="export-cb" value="' + idImg + '"> ' +
+      '<span>' + escapeHtml(imgLabel) + '（整图 + 各分区）</span>';
+    list.appendChild(row);
+    if (im.result.multi && im.cropList && im.cropList.length) {
+      im.cropList.forEach(function (c, ci) {
+        var idc = "rexp-crop-" + im.id + "-" + ci;
+        recogExportMap[idc] = { kind: "crop", imgId: im.id, cropIndex: ci };
+        var cRow = document.createElement("label");
+        cRow.className = "export-chat-item export-chat-item-sub";
+        cRow.innerHTML = '<input type="checkbox" class="export-cb" value="' + idc + '"> ' +
+          '<span>　选区 ' + (ci + 1) + (c.text ? "（含描述）" : "") + '</span>';
+        list.appendChild(cRow);
+      });
+    }
+  });
+  if (!any) { toast("暂无可导出的识别结果"); return; }
+  recEl("exportRecog").hidden = false;
+}
+
+function closeRecogExport() { var m = recEl("exportRecog"); if (m) m.hidden = true; }
+
+function downloadBlob(blob, filename) {
+  var u = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = u; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(u); }, 1000);
+}
+
+function buildRecogItems() {
+  var list = recEl("exportRecogList");
+  if (!list) return null;
+  var cbs = list.querySelectorAll("input.export-cb:checked");
+  if (!cbs.length) { toast("请至少选择一项"); return null; }
+  var items = [];
+  var chain = Promise.resolve();
+  cbs.forEach(function (cb) {
+    var m = recogExportMap[cb.value];
+    if (!m) return;
+    var im = getImg(m.imgId);
+    if (!im || !im.result) return;
+    var gi = uploadState.recognize.images.indexOf(im) + 1;
+    var giLabel = "图片 " + gi + (im.name ? "（" + im.name + "）" : "");
+    if (m.kind === "image") {
+      var imText = (im.text || "").trim();
+      if (im.result.multi && im.cropList && im.cropList.length) {
+        // 含选区的图片：先放原图，再分别给出每个选区的结果
+        chain = chain.then(function () {
+          return fileToDataURL(im.file);
+        }).then(function (origURL) {
+          var origMd = imText ? "" : "_（整图，以下为各选区分别识别的结果）_\n";
+          var compat = (im.result.data && im.result.data.compat) || {};
+          if (compat && Array.isArray(compat.pairs) && compat.pairs.length) {
+            origMd += "\n### 配伍参考（基于各选区药材）\n";
+            compat.pairs.forEach(function (p) {
+              var a = p.a || p[0] || "", b = p.b || p[1] || "", rel = p.relation || p[2] || "";
+              origMd += "- **" + a + "** ↔ **" + b + "**：" + rel + "\n";
+            });
+          }
+          items.push({
+            heading: giLabel + " · 原图",
+            images: [origURL],
+            text: imText,
+            markdown: origMd
+          });
+        });
+        im.cropList.forEach(function (c, ci) {
+          chain = chain.then(function () {
+            return cropToDataURL(im, c);
+          }).then(function (cropURL) {
+            items.push({
+              heading: giLabel + " · 选区 " + (ci + 1),
+              images: [cropURL],
+              text: "",
+              markdown: recogCropMarkdown(im, ci)
+            });
+          });
+        });
+      } else {
+        chain = chain.then(function () {
+          return fileToDataURL(im.file);
+        }).then(function (dataURL) {
+          items.push({
+            heading: giLabel,
+            images: [dataURL],
+            text: imText,
+            markdown: recogImageMarkdown(im)
+          });
+        });
+      }
+    } else {
+      chain = chain.then(function () {
+        return cropToDataURL(im, im.cropList[m.cropIndex]);
+      }).then(function (dataURL) {
+        var c = im.cropList[m.cropIndex];
+        items.push({
+          heading: "图片 " + gi + " · 选区 " + (m.cropIndex + 1),
+          images: [dataURL],
+          text: "",
+          markdown: recogCropMarkdown(im, m.cropIndex)
+        });
+      });
+    }
+  });
+  return chain.then(function () { return items; });
+}
+
+function doRecogExport() {
+  var fmt = (document.querySelector("input[name='recogExpFmt']:checked") || {}).value || "markdown";
+  var itemsP = buildRecogItems();
+  if (!itemsP) return;
+  itemsP.then(function (items) {
+    if (!items || !items.length) { toast("请至少选择一项"); return; }
+    // 用户自定义文件名（去除非法字符，缺省回退到默认名）
+    var rawName = (recEl("recogExportName").value || "").trim();
+    var safeName = rawName.replace(/[\\/:*?"<>|]/g, "").trim();
+    if (!safeName) safeName = "本草识别结果导出";
+    if (fmt === "markdown") {
+      var md = "# 本草识鉴 · 图片识别结果\n\n";
+      items.forEach(function (it) {
+        md += "## " + it.heading + "\n\n";
+        (it.images || []).forEach(function (src, k) {
+          md += "![" + it.heading + " 图" + (k + 1) + "](" + src + ")\n\n";
+        });
+        if (it.text) md += "> " + it.text + "\n\n";
+        md += it.markdown + "\n\n---\n\n";
+      });
+      downloadBlob(new Blob([md], { type: "text/markdown;charset=utf-8" }), safeName + ".md");
+      closeRecogExport();
+      return;
+    }
+    var payload = { title: "本草识鉴 · 图片识别结果", items: items };
+    var url = fmt === "pdf" ? "/api/export_recog_pdf" : "/api/export_recog_docx";
+    var fname = fmt === "pdf" ? safeName + ".pdf" : safeName + ".docx";
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (r) {
+      if (!r.ok) {
+        return r.json().then(function (j) { throw new Error(j.error || ("HTTP " + r.status)); },
+          function () { throw new Error("HTTP " + r.status); });
+      }
+      return r.blob();
+    }).then(function (blob) {
+      downloadBlob(blob, fname);
+      closeRecogExport();
+    }).catch(function (err) {
+      toast("导出失败：" + err.message);
+    });
+  });
+}
+
+function initRecogExport() {
+  var btn = recEl("btn-recog-export");
+  if (btn) btn.addEventListener("click", openRecogExport);
+  document.querySelectorAll("[data-recog-export-close]").forEach(function (b) {
+    b.addEventListener("click", closeRecogExport);
+  });
+  var all = document.querySelector("[data-recog-export-all]");
+  if (all) all.addEventListener("click", function () {
+    recEl("exportRecogList").querySelectorAll(".export-cb").forEach(function (c) { c.checked = true; });
+  });
+  var none = document.querySelector("[data-recog-export-none]");
+  if (none) none.addEventListener("click", function () {
+    recEl("exportRecogList").querySelectorAll(".export-cb").forEach(function (c) { c.checked = false; });
+  });
+  var doBtn = recEl("recogExportDo");
+  if (doBtn) doBtn.addEventListener("click", doRecogExport);
+  var modal = recEl("exportRecog");
+  if (modal) modal.addEventListener("click", function (e) { if (e.target === modal) closeRecogExport(); });
+}
+initRecogExport();
+initSearchExport();
+initUserHerb();
+
+/* ============================================================
    模块 5：药材关系图谱（力导向网络图）
    移植自 app/graph_view.py 的纯 Canvas 力导向实现，改用新中式配色
    ============================================================ */
@@ -2635,6 +3053,8 @@ function graphShowDetail(n) {
   var parts = [];
   if (n.type === "herb") {
     parts.push("<h3>" + esc(cleanName(n.id)) + "</h3>");
+    if (n.image) parts.push('<img class="herb-detail-img" src="' + esc(n.image) + '" alt="">');
+    if (n.user_added) parts.push('<div class="muted">来源：用户增补（本草补遗库）</div>');
     parts.push("<div>药性：" + esc(n.property || "—") + "</div>");
     parts.push("<div>归经：" + esc(n.meridian || "—") + "</div>");
     parts.push("<div>功效：" + esc(n["function"] || "—") + "</div>");
@@ -3187,6 +3607,9 @@ $("[data-graph-load]").addEventListener("click", function () {
   // 支持多药材：逗号/顿号/空格/分号分隔，传入数组以「多味聚焦」展示
   var names = raw.split(/[，,、;；\s]+/).map(function (s) { return s.trim(); })
     .filter(function (s) { return s; });
+  // 若输入的药材名均不在知识库中，提示加入「本草补遗库」
+  var unknown = names.filter(function (n) { return !allHerbNames.has(n); });
+  if (unknown.length) { showGraphNotFound(unknown); return; }
   // 搜索新药材即从药材关联视图/筛选暂存中离开，解除条件屏蔽
   graphFilterLocked = false; graphFiltersBak = null;
   graphHideDetail();   // 切换聚焦药材，隐藏旧知识卡片
@@ -3202,13 +3625,15 @@ $("#graph-focus").addEventListener("keydown", function (e) {
   if (e.key === "Enter") $("[data-graph-load]").click();
 });
 
-/* 药材名补全（datalist） */
+/* 药材名补全（datalist）+ 全部可检索药材名（含用户增补） */
+var allHerbNames = new Set();
 async function loadHerbNames() {
   try {
     var resp = await fetch("/herbs");
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     var data = await resp.json();
     var list = data.herbs || data.names || [];
+    allHerbNames = new Set(list);
     var dl = $("#graph-herbs");
     dl.innerHTML = list.map(function (n) {
       return '<option value="' + esc(n) + '"></option>';
@@ -3219,6 +3644,181 @@ async function loadHerbNames() {
 }
 
 loadHerbNames();
+
+/* ====================== 用户增补药材库（本草补遗库） ====================== */
+var pendingNotFoundNames = "";
+
+function showGraphNotFound(unknown) {
+  pendingNotFoundNames = unknown.join("、");
+  var box = recEl("graph-notfound");
+  if (!box) return;
+  recEl("graph-notfound-text").innerHTML = "知识库中未找到：<b>" + esc(pendingNotFoundNames) +
+    "</b>。是否将其加入「本草补遗库」后纳入检索与图谱？";
+  box.hidden = false;
+}
+function hideGraphNotFound() { var b = recEl("graph-notfound"); if (b) b.hidden = true; }
+
+var currentEditName = null;   // 编辑时的原药名（null=新增）
+var currentEditImage = null;  // 编辑时的现有图片 URL
+
+function openUserHerbForm(herb, prefillName) {
+  currentEditName = herb ? herb.name : null;
+  currentEditImage = herb ? (herb.image || null) : null;
+  recEl("userHerbFormTitle").textContent = herb ? ("编辑药材：" + herb.name) : "添加药材（本草补遗库）";
+  recEl("uhName").value = herb ? (herb.name || "") : (prefillName || "");
+  recEl("uhProperty").value = herb ? (herb.property || "") : "";
+  recEl("uhMeridian").value = herb ? (herb.meridian || "") : "";
+  recEl("uhFunction").value = herb ? (herb["function"] || "") : "";
+  recEl("uhAliases").value = (herb && herb.aliases) ? herb.aliases.join("、") : "";
+  recEl("uhIndications").value = herb ? (herb.indications || "") : "";
+  recEl("uhCautions").value = herb ? (herb.cautions || "") : "";
+  recEl("uhPaired").value = herb ? (herb.paired_herb || "") : "";
+  recEl("uhImage").value = "";
+  var prev = recEl("uhImagePreview");
+  if (herb && herb.image) { prev.src = herb.image; prev.hidden = false; }
+  else { prev.hidden = true; prev.removeAttribute("src"); }
+  recEl("userHerbForm").hidden = false;
+}
+function closeUserHerbForm() { recEl("userHerbForm").hidden = true; }
+
+function saveUserHerb() {
+  var name = recEl("uhName").value.trim();
+  if (!name) { toast("请填写药名"); return; }
+  var record = {
+    name: name,
+    property: recEl("uhProperty").value.trim(),
+    meridian: recEl("uhMeridian").value.trim(),
+    "function": recEl("uhFunction").value.trim(),
+    aliases: recEl("uhAliases").value.trim(),
+    indications: recEl("uhIndications").value.trim(),
+    cautions: recEl("uhCautions").value.trim(),
+    paired_herb: recEl("uhPaired").value.trim(),
+    image: null
+  };
+  var fileInput = recEl("uhImage");
+  var file = fileInput.files && fileInput.files[0];
+  function doSave(imageDataUrl) {
+    record.image = imageDataUrl;
+    var editing = currentEditName;
+    var url = editing ? ("/api/user_herbs/" + encodeURIComponent(editing)) : "/api/user_herbs";
+    var method = editing ? "PUT" : "POST";
+    fetch(url, {
+      method: method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(record)
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ("HTTP " + r.status)); },
+        function () { throw new Error("HTTP " + r.status); });
+      return r.json();
+    }).then(function () {
+      toast(editing ? "已更新药材" : "已加入本草补遗库");
+      closeUserHerbForm();
+      hideGraphNotFound();
+      loadHerbNames().then(function () {
+        loadGraph([name], { keepFilters: false });
+        if (!recEl("userHerbLib").hidden) renderUserHerbLib();
+      });
+    }).catch(function (err) { toast("保存失败：" + err.message); });
+  }
+  if (file) {
+    var reader = new FileReader();
+    reader.onload = function () { doSave(reader.result); };
+    reader.onerror = function () { doSave(null); };
+    reader.readAsDataURL(file);
+  } else {
+    doSave(null);  // 编辑且未换图时由后端保留原图
+  }
+}
+
+function openUserHerbLib() { recEl("userHerbLib").hidden = false; renderUserHerbLib(); }
+function closeUserHerbLib() { recEl("userHerbLib").hidden = true; }
+
+function renderUserHerbLib() {
+  var list = recEl("userHerbLibList");
+  if (!list) return;
+  list.innerHTML = '<div class="user-herb-loading">加载中…</div>';
+  fetch("/api/user_herbs").then(function (r) { return r.json(); }).then(function (d) {
+    var herbs = d.herbs || [];
+    if (!herbs.length) {
+      list.innerHTML = '<div class="user-herb-empty">暂无增补药材。点击「+ 新增药材」开始添加。</div>';
+      return;
+    }
+    list.innerHTML = herbs.map(function (h) {
+      var img = h.image
+        ? '<img class="user-herb-thumb" src="' + esc(h.image) + '" alt="">'
+        : '<div class="user-herb-thumb user-herb-thumb-empty">无图</div>';
+      return '<div class="user-herb-item" data-name="' + esc(h.name) + '">' + img +
+        '<div class="user-herb-info"><div class="user-herb-name">' + esc(h.name) + '</div>' +
+        '<div class="user-herb-sub">' + esc(h.property || "—") + " · " + esc(h.meridian || "—") + '</div></div>' +
+        '<div class="user-herb-ops">' +
+        '<button type="button" class="fav-mini-btn" data-uh-edit="' + esc(h.name) + '">编辑</button>' +
+        '<button type="button" class="fav-mini-btn user-herb-del" data-uh-del="' + esc(h.name) + '">删除</button>' +
+        '</div></div>';
+    }).join("");
+  }).catch(function () { list.innerHTML = '<div class="user-herb-empty">加载失败。</div>'; });
+}
+
+function editUserHerb(name) {
+  closeUserHerbLib();
+  fetch("/api/user_herbs").then(function (r) { return r.json(); }).then(function (d) {
+    var h = (d.herbs || []).find(function (x) { return x.name === name; });
+    if (!h) { toast("未找到该药材"); return; }
+    openUserHerbForm(h);
+  });
+}
+
+function deleteUserHerb(name) {
+  if (!confirm("确定删除「" + name + "」？删除后将同时从检索与图谱中移除。")) return;
+  fetch("/api/user_herbs/" + encodeURIComponent(name), { method: "DELETE" }).then(function (r) {
+    if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ("HTTP " + r.status)); },
+      function () { throw new Error("HTTP " + r.status); });
+    return r.json();
+  }).then(function () {
+    toast("已删除");
+    renderUserHerbLib();
+    loadHerbNames().then(function () { loadGraph("", {}); });
+  }).catch(function (err) { toast("删除失败：" + err.message); });
+}
+
+function initUserHerb() {
+  var libBtn = recEl("btn-user-herb-lib");
+  if (libBtn) libBtn.addEventListener("click", openUserHerbLib);
+  var saveBtn = recEl("userHerbSave");
+  if (saveBtn) saveBtn.addEventListener("click", saveUserHerb);
+  document.querySelectorAll("[data-user-herb-form-close]").forEach(function (el) {
+    el.addEventListener("click", closeUserHerbForm);
+  });
+  document.querySelectorAll("[data-user-herb-lib-close]").forEach(function (el) {
+    el.addEventListener("click", closeUserHerbLib);
+  });
+  var addNew = recEl("userHerbAddNew");
+  if (addNew) addNew.addEventListener("click", function () { closeUserHerbLib(); openUserHerbForm(null); });
+  var imgInput = recEl("uhImage");
+  if (imgInput) imgInput.addEventListener("change", function () {
+    var f = imgInput.files && imgInput.files[0];
+    var prev = recEl("uhImagePreview");
+    if (f) {
+      var rd = new FileReader();
+      rd.onload = function () { prev.src = rd.result; prev.hidden = false; };
+      rd.readAsDataURL(f);
+    } else { prev.hidden = true; }
+  });
+  var nfAdd = recEl("graph-notfound-add");
+  if (nfAdd) nfAdd.addEventListener("click", function () { openUserHerbForm(null, pendingNotFoundNames); });
+  var nfClose = recEl("graph-notfound-close");
+  if (nfClose) nfClose.addEventListener("click", hideGraphNotFound);
+  var list = recEl("userHerbLibList");
+  if (list) list.addEventListener("click", function (e) {
+    var t = e.target;
+    var en = t.getAttribute && t.getAttribute("data-uh-edit");
+    var dn = t.getAttribute && t.getAttribute("data-uh-del");
+    if (en) editUserHerb(en);
+    else if (dn) deleteUserHerb(dn);
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { closeUserHerbForm(); closeUserHerbLib(); }
+  });
+}
 
 /* ---------- 从首页跳转激活指定页签（?tab=xxx 或 #tab=xxx） ---------- */
 (function activateTabFromUrl() {

@@ -15,6 +15,7 @@
 from typing import Dict, List, Optional, Tuple, Union
 import os
 import re
+import json
 import pandas as pd
 import networkx as nx
 from knowledge_graph.confusable_herbs import get_confusable
@@ -235,9 +236,12 @@ class HerbKnowledgeGraph:
         self.data_path = data_path
         self.graph = nx.Graph()
         self.formulas: Dict[str, Dict] = {}
+        self.user_herbs_path = "data/user_herbs.json"
+        self.user_herbs = []
         self._load()
         self._load_formulas()
         self._load_herb_extra()
+        self._load_user_herbs()
 
     def _load(self):
         if not os.path.exists(self.data_path):
@@ -633,6 +637,8 @@ class HerbKnowledgeGraph:
                 "aliases": nd.get("aliases", []),
                 "indications": nd.get("indications", ""),
                 "cautions": nd.get("cautions", ""),
+                "image": nd.get("image"),
+                "user_added": nd.get("user_added", False),
                 "pairs": self.recommend_pairs(n),
                 "incompatible": contra["incompatible"],
                 "restraint": contra["restraint"],
@@ -807,6 +813,151 @@ class HerbKnowledgeGraph:
                 "full": full[:top_k], "partial": partial[:top_k],
                 "hint": "未匹配到任何药材，请补充更明确的性味/归经/功效关键词。"
                 if not full and not partial else None}
+
+    # ----------------------- 用户增补药材库（本草补遗库） -----------------------
+    def _clean_user_record(self, record: Dict) -> Dict:
+        """规整用户药材记录（统一字段名与类型，便于落盘与回传）。"""
+        aliases = record.get("aliases") or []
+        if isinstance(aliases, str):
+            aliases = [a.strip() for a in
+                       re.split(r"[，,、;；\s]+", aliases) if a.strip()]
+        return {
+            "name": _normalize_name(record.get("name", "")),
+            "property": (record.get("property") or "").strip(),
+            "meridian": (record.get("meridian") or "").strip(),
+            "function": (record.get("function") or "").strip(),
+            "aliases": aliases,
+            "indications": (record.get("indications") or "").strip(),
+            "cautions": (record.get("cautions") or "").strip(),
+            "paired_herb": (record.get("paired_herb") or "").strip(),
+            "image": record.get("image"),
+        }
+
+    def _add_user_herb_node(self, record: Dict):
+        """把一个用户药材记录作为真实图谱节点加入（无 node_type → 可被检索/可视化）。"""
+        name = _normalize_name(record.get("name", ""))
+        if not name:
+            return
+        prop = (record.get("property") or "").strip()
+        mer = (record.get("meridian") or "").strip()
+        func = (record.get("function") or "").strip()
+        cats = record.get("categories") or _classify_function(func)
+        if not cats:
+            cats = ["其他"]
+        attrs = {
+            "property": prop,
+            "meridian": mer,
+            "function": func,
+            "categories": cats,
+            "toxicity": _parse_toxicity(prop),
+            "aliases": record.get("aliases") or [],
+            "indications": (record.get("indications") or "").strip(),
+            "cautions": (record.get("cautions") or "").strip(),
+            "image": record.get("image"),
+            "user_added": True,
+            "source": "user",
+        }
+        if self.graph.has_node(name):
+            self.graph.nodes[name].update(attrs)
+        else:
+            self.graph.add_node(name, **attrs)
+            for c in cats:
+                if c not in self.graph:
+                    self.graph.add_node(c, node_type="category", toxicity="未知")
+                self.graph.add_edge(name, c, relation="category")
+            for m in mer.replace("、", ",").split(","):
+                m = m.strip()
+                if m:
+                    if m not in self.graph:
+                        self.graph.add_node(m, node_type="meridian", toxicity="未知")
+                    self.graph.add_edge(name, m, relation="meridian")
+        # 常用配伍（配对）
+        paired = (record.get("paired_herb") or "").strip()
+        if paired:
+            n2 = _normalize_name(paired)
+            if n2 and n2 != name:
+                if not self.graph.has_node(n2):
+                    self.graph.add_node(n2, categories=["其他"], toxicity="未知",
+                                        user_added=True, source="user-implied")
+                self.graph.add_edge(name, n2, relation="paired")
+        # 十八反 / 十九畏（与已有药材节点逐对判定）
+        for other in self.graph.nodes:
+            if other == name or self.graph.nodes[other].get("node_type"):
+                continue
+            if _is_incompatible(name, other):
+                self.graph.add_edge(name, other, relation="incompatible")
+            elif _is_restraint(name, other):
+                self.graph.add_edge(name, other, relation="restraint")
+
+    def _save_user_herbs(self):
+        try:
+            d = os.path.dirname(self.user_herbs_path)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(self.user_herbs_path, "w", encoding="utf-8") as f:
+                json.dump(self.user_herbs, f, ensure_ascii=False, indent=2)
+        except Exception as e:  # pragma: no cover - 落盘失败不应阻断主流程
+            print("保存用户药材库失败：", e)
+
+    def _load_user_herbs(self):
+        self.user_herbs = []
+        if not os.path.exists(self.user_herbs_path):
+            return
+        try:
+            with open(self.user_herbs_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                for r in data:
+                    self.user_herbs.append(self._clean_user_record(r))
+                    self._add_user_herb_node(r)
+        except Exception as e:  # pragma: no cover
+            print("加载用户药材库失败：", e)
+
+    def add_user_herb(self, record: Dict) -> Dict:
+        name = _normalize_name(record.get("name", ""))
+        if not name:
+            raise ValueError("请填写药名")
+        if self.graph.has_node(name):
+            raise ValueError("「%s」已存在于知识库中" % name)
+        self._add_user_herb_node(record)
+        self.user_herbs.append(self._clean_user_record(record))
+        self._save_user_herbs()
+        return record
+
+    def update_user_herb(self, old_name: str, record: Dict) -> Dict:
+        old = _normalize_name(old_name)
+        idx = next((i for i, r in enumerate(self.user_herbs)
+                    if _normalize_name(r.get("name", "")) == old), None)
+        if idx is None:
+            raise ValueError("未找到该药材")
+        if self.graph.has_node(old):
+            self.graph.remove_node(old)
+        self._add_user_herb_node(record)
+        self.user_herbs[idx] = self._clean_user_record(record)
+        self._save_user_herbs()
+        return record
+
+    def delete_user_herb(self, name: str) -> bool:
+        n = _normalize_name(name)
+        idx = next((i for i, r in enumerate(self.user_herbs)
+                    if _normalize_name(r.get("name", "")) == n), None)
+        if idx is None:
+            return False
+        if self.graph.has_node(n):
+            self.graph.remove_node(n)
+        del self.user_herbs[idx]
+        self._save_user_herbs()
+        return True
+
+    def get_user_herb(self, name: str) -> Optional[Dict]:
+        n = _normalize_name(name)
+        for r in self.user_herbs:
+            if _normalize_name(r.get("name", "")) == n:
+                return r
+        return None
+
+    def list_user_herbs(self) -> List[Dict]:
+        return [self._clean_user_record(r) for r in self.user_herbs]
 
 
 def build_knowledge_graph(config: Dict) -> HerbKnowledgeGraph:

@@ -1,0 +1,15 @@
+[
+  {
+    "name": "草药",
+    "property": "微寒",
+    "meridian": "肾经",
+    "function": "清热解毒",
+    "aliases": [
+      "草药1"
+    ],
+    "indications": "咳嗽痰多",
+    "cautions": "脾胃虚寒者慎用",
+    "paired_herb": "枸杞",
+    "image": "/user_herb_images/8852685eb03c4958af6e1f2226cf1ad3.png"
+  }
+]
