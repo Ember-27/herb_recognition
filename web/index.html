@@ -21,7 +21,10 @@
 <!-- ======= 左侧悬浮模块导航 ======= -->
 <nav class="side-nav" role="tablist" aria-label="模块导航">
   <div class="side-nav-list">
-    <button class="tab side-link active" data-tab="recognize" role="tab" aria-selected="true">
+    <button class="tab side-link active" data-tab="home" role="tab" aria-selected="true">
+      <span class="side-link-ic" aria-hidden="true">⌂</span><span class="side-link-tx">首页</span>
+    </button>
+    <button class="tab side-link" data-tab="recognize" role="tab" aria-selected="false">
       <span class="side-link-ic" aria-hidden="true">⊕</span><span class="side-link-tx">图片识别</span>
     </button>
     <button class="tab side-link" data-tab="search" role="tab" aria-selected="false">
@@ -41,8 +44,29 @@
 
 <main class="tcm-main">
 
+  <!-- ======= 模块 0：首页（与其它模块平行，可跳转） ======= -->
+  <section id="home" class="module module-home active" role="tabpanel" data-bg="home-medicine">
+    <div class="home-hero">
+      <div class="home-hero-inner">
+        <span class="home-eyebrow">本草识鉴 · 智能药材辨识</span>
+        <h1 class="home-title">望闻问切，<br>一图识百草</h1>
+        <p class="home-sub">上传一张药材照片，即可获得 Top-5 识别结果、药性归经与配伍参考；支持特性检索、关注区域可视与 AI 对话。</p>
+        <div class="home-cta">
+          <button type="button" class="btn-primary home-go" data-go="recognize">开始辨识药材</button>
+          <button type="button" class="btn-ghost home-go" data-go="search">特性检索</button>
+          <button type="button" class="btn-ghost home-go" data-go="chat">问问 AI</button>
+        </div>
+      </div>
+      <!-- 首页右侧：中药预览照片堆叠（景深轮播） -->
+      <div class="home-stage">
+        <div class="home-preview" id="homePreview" aria-hidden="true"></div>
+        <div class="home-stage-cap">本草掠影 · 一帧一药</div>
+      </div>
+    </div>
+  </section>
+
   <!-- ======= 模块 1：图片识别（左图右档 · 工作台双栏） ======= -->
-  <section id="recognize" class="module module-recognize active" role="tabpanel" data-bg="taoism">
+  <section id="recognize" class="module module-recognize" role="tabpanel">
     <div class="module-head">
       <h2>图片识别</h2>
       <p class="module-desc">上传药材图片，AI 给出 Top-5 识别结果与药性、配伍等完整档案。</p>
@@ -80,7 +104,6 @@
             <button type="button" class="btn-ghost btn-sm" id="btn-crop-confirm" data-crop-confirm hidden>添加选区</button>
             <button type="button" class="btn-ghost btn-sm" id="btn-crop-cancel" data-crop-cancel hidden>取消框选</button>
             <button type="button" class="btn-ghost btn-sm" id="btn-crop-clear" hidden>清除选框</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-crop-reset" data-clear hidden>清除图片</button>
           </div>
           <!-- 已确认选区列表（可逐个删除） -->
           <div class="crop-list" id="crop-list"></div>
@@ -129,7 +152,7 @@
   </section>
 
   <!-- ======= 模块 2：特性检索（检索台 · 上查询下结果列） ======= -->
-  <section id="search" class="module module-search" role="tabpanel" data-bg="plum">
+  <section id="search" class="module module-search" role="tabpanel">
     <div class="module-head">
       <h2>特性检索</h2>
       <p class="module-desc">按「性味 + 归经 + 功效」描述检索药材，命中条件越多的排在前面。</p>
@@ -166,7 +189,7 @@
   </section>
 
   <!-- ======= 模块 3：Grad-CAM（左图右解读 · 对照工作台） ======= -->
-  <section id="gradcam" class="module module-gradcam" role="tabpanel" data-bg="dendrobium">
+  <section id="gradcam" class="module module-gradcam" role="tabpanel">
     <div class="module-head">
       <h2>Grad-CAM 关注区域</h2>
       <p class="module-desc">热力图展示模型判定药材类别时主要依据的图像部位，拖动滑块调节热力强度。</p>
@@ -215,7 +238,7 @@
   </section>
 
   <!-- ======= 模块 4：AI 对话（左快捷竖栏 + 右对话室） ======= -->
-  <section id="chat" class="module module-chat" role="tabpanel" data-bg="chinese-medicine">
+  <section id="chat" class="module module-chat" role="tabpanel">
     <div class="module-head">
       <h2>AI 对话</h2>
       <p class="module-desc">与 AI 讨论药材辨识与药性知识，可上传图片提问，回答附知识库来源。</p>
@@ -275,7 +298,7 @@
   </section>
 
   <!-- ======= 模块 5：药材关系图谱（力导向网络图） ======= -->
-  <section id="graph" class="module" role="tabpanel" data-bg="natural-medicine">
+  <section id="graph" class="module" role="tabpanel">
     <div class="module-head">
       <h2>药材关系图谱</h2>
       <p class="module-desc">力导向网络图：节点为药材，连线为关系（相须相使 / 十八反 / 十九畏 / 组成）。</p>

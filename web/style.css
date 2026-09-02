@@ -111,12 +111,12 @@ select:focus-visible,
   font-size: 30px;
   font-weight: 700;
   letter-spacing: 6px;
-  color: var(--ink);
+  color: var(--ink);                          /* 默认深色：非首页浅底 */
 }
 
 .tcm-subtitle {
   font-size: 13px;
-  color: var(--ink-soft);
+  color: var(--ink-soft);                     /* 默认深灰：非首页浅底 */
   letter-spacing: 1px;
   margin-top: 2px;
 }
@@ -132,6 +132,20 @@ select:focus-visible,
   letter-spacing: 1px;
 }
 
+/* 首页（有照片底）时页头改为亮色 */
+body.home-active .tcm-title {
+  color: #FBF7EE;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+}
+body.home-active .tcm-subtitle {
+  color: rgba(244, 241, 233, 0.85);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+}
+body.home-active .tcm-header-badge {
+  color: #E0BE84;
+  border-color: rgba(201, 160, 99, 0.55);
+}
+
 /* ---------- 左侧悬浮模块导航 ---------- */
 .side-nav {
   position: fixed;
@@ -145,8 +159,8 @@ select:focus-visible,
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  background: rgba(251, 248, 241, 0.82);
-  backdrop-filter: blur(8px);
+  background: rgba(251, 248, 241, 0.94);        /* 非首页：近白底深色字 */
+  backdrop-filter: blur(4px);
   border: 1px solid var(--line-strong);
   border-radius: 18px;
   box-shadow: var(--shadow-soft);
@@ -164,7 +178,7 @@ select:focus-visible,
   border: 1px solid transparent;
   background: transparent;
   font-family: var(--sans);
-  color: var(--ink-soft);
+  color: var(--ink);                       /* 非首页：深色文字 */
   padding: 8px 4px;
   cursor: pointer;
   border-radius: 12px;
@@ -174,6 +188,8 @@ select:focus-visible,
   align-items: center;
   gap: 3px;
   width: 100%;
+  text-decoration: none;
+  text-align: center;
 }
 
 .side-link-ic {
@@ -186,6 +202,30 @@ select:focus-visible,
   font-size: 11px;
   letter-spacing: 1px;
   writing-mode: horizontal-tb;
+  color: var(--ink);                         /* 非首页：深色文字 */
+}
+
+/* 首页激活时：侧栏红底白字 */
+body.home-active .side-nav {
+  background: var(--vermilion);
+  border-color: rgba(255, 253, 248, 0.35);
+  box-shadow: 0 8px 26px rgba(169, 50, 38, 0.45);
+}
+body.home-active .side-link {
+  color: #FFFFFF;
+}
+body.home-active .side-link-tx {
+  color: #FFFFFF;
+}
+body.home-active .side-link:hover {
+  background: rgba(255, 253, 248, 0.12);
+  color: #FFFFFF;
+}
+body.home-active .side-link.active {
+  background: rgba(255, 253, 248, 0.2);
+  border-color: rgba(255, 253, 248, 0.55);
+  color: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
 .side-link:hover {
@@ -247,15 +287,261 @@ select:focus-visible,
   opacity: 0.06;
   filter: saturate(0.9);
 }
-.module[data-bg="taoism"]::before        { background-image: url("../images/_01/taoism-8579682_1280.jpg"); }
-.module[data-bg="plum"]::before          { background-image: url("../images/_01/plum-blossoms-8579641_1280.jpg"); }
-.module[data-bg="dendrobium"]::before    { background-image: url("../images/_01/dendrobium-620828_1280.jpg"); }
-.module[data-bg="chinese-medicine"]::before { background-image: url("../images/_01/chinese-medicine-3528232_1280.jpg"); }
-.module[data-bg="natural-medicine"]::before { background-image: url("../images/_01/natural-medicine-1426647_1280.jpg"); }
+.module[data-bg="taoism"]::before        { background-image: url("images/_01/taoism-8579682_1280.jpg"); }
+.module[data-bg="plum"]::before          { background-image: url("images/_01/plum-blossoms-8579641_1280.jpg"); }
+.module[data-bg="dendrobium"]::before    { background-image: url("images/_01/dendrobium-620828_1280.jpg"); }
+.module[data-bg="chinese-medicine"]::before { background-image: url("images/_01/chinese-medicine-3528232_1280.jpg"); }
+.module[data-bg="natural-medicine"]::before { background-image: url("images/_01/natural-medicine-1426647_1280.jpg"); }
+.module[data-bg="home-medicine"]::before { background-image: url("images/_01/chinese-medicine-2178253_1280.jpg"); }
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* —— 模块 0：首页 · 沉稳「药柜」墨绿风（与其它浅色工作模块形成差异） —— */
+.module-home[data-bg]::before {
+  /* 首页显示清晰压暗的照片底（模块仍用 .06 极淡铺底），形成沉浸 vs 纸面对比 */
+  opacity: 1;
+  filter: brightness(0.5) saturate(0.92);
+}
+.module-home .home-hero {
+  min-height: calc(100vh - 48px);
+  display: flex;
+  align-items: center;
+  padding: 32px;
+}
+.module-home .home-hero-inner {
+  max-width: 600px;
+  /* 提高不透明度并加内衬深色渐变，确保照片透不上来、文字清晰 */
+  background:
+    linear-gradient(160deg, rgba(18, 25, 21, 0.94), rgba(24, 32, 27, 0.88)),
+    rgba(22, 30, 26, 0.82);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: 1px solid rgba(201, 160, 99, 0.45);   /* 琥珀金实边框，去除透明感 */
+  border-radius: 4px;                           /* 接近直角，区别于其它模块的圆角卡片 */
+  padding: 48px 46px 44px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  animation: cardRise 0.55s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+/* 顶部细线分隔，强化「匾额」气质 */
+.module-home .home-hero-inner::before {
+  content: "";
+  display: block;
+  width: 38px;
+  height: 3px;
+  background: #C9A063;                           /* 琥珀金描边 */
+  margin-bottom: 22px;
+}
+.module-home .home-eyebrow {
+  display: inline-block;
+  font-size: 13px;
+  letter-spacing: 0.32em;
+  color: #E0BE84;                               /* 提亮琥珀金，增强对比 */
+  margin-bottom: 16px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+.module-home .home-title {
+  font-family: var(--serif);
+  font-size: 46px;
+  line-height: 1.22;
+  letter-spacing: 0.04em;
+  color: #FBF7EE;                               /* 宣纸白（更亮） */
+  margin: 0 0 18px;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.7);
+}
+.module-home .home-sub {
+  font-size: 15px;
+  line-height: 1.9;
+  color: #ECE8DC;                               /* 提高副文亮度 */
+  margin: 0 0 32px;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.55);
+}
+.module-home .home-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+/* 首页按钮改用描边幽灵风，与模块内实心朱砂按钮区分 */
+.module-home .home-cta .btn-primary {
+  background: transparent;
+  border: 1px solid #C9A063;
+  color: #F4F1E9;
+  border-radius: 4px;
+}
+.module-home .home-cta .btn-primary:hover {
+  background: #C9A063;
+  color: #1A201C;
+  transform: translateY(-1px);
+}
+.module-home .home-cta .btn-ghost {
+  background: transparent;                      /* 覆盖通用 .btn-ghost 的白色底 */
+  border: 1px solid rgba(244, 241, 233, 0.55);  /* 提亮边框 */
+  color: #F4F1E9;                               /* 宣纸白，确保在深色面板上可见 */
+  border-radius: 4px;
+}
+.module-home .home-cta .btn-ghost:hover {
+  background: rgba(201, 160, 99, 0.18);
+  border-color: #C9A063;
+  color: #FFFFFF;
+}
+@keyframes cardRise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* —— 首页右侧：中药预览照片堆叠（景深轮播） —— */
+.module-home .home-hero {
+  justify-content: space-between;
+  gap: 40px;
+}
+.module-home .home-stage {
+  position: relative;
+  flex: 0 0 380px;
+  width: 380px;
+  height: 480px;
+  align-self: center;
+  perspective: 1400px;          /* 透视，强化景深 */
+}
+.module-home .home-preview {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+}
+.module-home .home-photo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 300px;
+  height: 380px;
+  margin: -190px 0 0 -150px;    /* 居中基准 */
+  border-radius: 10px;
+  border: 1px solid rgba(255, 253, 248, 0.5);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+  background: linear-gradient(160deg, #2a2a22 0%, #1b1f18 100%);
+  cursor: pointer;
+  overflow: hidden;
+  /* 平滑的景深切换：一张张浮现 */
+  transition:
+    transform 0.8s cubic-bezier(0.22, 0.7, 0.28, 1),
+    opacity 0.8s cubic-bezier(0.22, 0.7, 0.28, 1),
+    filter 0.8s cubic-bezier(0.22, 0.7, 0.28, 1),
+    box-shadow 0.8s cubic-bezier(0.22, 0.7, 0.28, 1);
+  will-change: transform, opacity, filter;
+}
+/* 照片本体：保持原始比例，不裁切 */
+.module-home .home-photo img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;       /* 比例不变 */
+  object-position: center;
+}
+/* 右侧竖排名称 + 拼音（金色） */
+.module-home .home-photo-meta {
+  position: absolute;
+  top: 14px;
+  right: 12px;
+  bottom: 14px;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 2;
+}
+.module-home .home-name,
+.module-home .home-py {
+  writing-mode: vertical-rl;     /* 竖排 */
+  text-orientation: upright;
+  letter-spacing: 0.12em;
+  color: #E8C66B;                /* 金色 */
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.9);
+  font-family: var(--serif);
+}
+.module-home .home-name {
+  font-size: 30px;
+  font-weight: 600;
+}
+.module-home .home-py {
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  color: #D9B65A;
+  align-self: flex-end;          /* 拼音贴底部，与名称错落 */
+  text-transform: none;
+}
+/* 当前张：清晰、最大、最靠前 */
+.module-home .home-photo.pos-0 {
+  transform: translateZ(60px) scale(1) rotate(-1deg);
+  opacity: 1;
+  filter: brightness(1.02) saturate(1.04);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.6);
+  z-index: 40;
+}
+/* 第二张：略小、下移、轻微模糊 */
+.module-home .home-photo.pos-1 {
+  transform: translate(18px, 34px) scale(0.9) rotate(2deg);
+  opacity: 0.78;
+  filter: brightness(0.82) saturate(0.95) blur(1.2px);
+  z-index: 30;
+}
+/* 第三张：更小、更下移、更模糊 */
+.module-home .home-photo.pos-2 {
+  transform: translate(34px, 70px) scale(0.8) rotate(4deg);
+  opacity: 0.5;
+  filter: brightness(0.66) saturate(0.9) blur(2.6px);
+  z-index: 20;
+}
+/* 第四张：远景，仅露一角 */
+.module-home .home-photo.pos-3 {
+  transform: translate(50px, 108px) scale(0.7) rotate(6deg);
+  opacity: 0.28;
+  filter: brightness(0.52) saturate(0.85) blur(4px);
+  z-index: 10;
+}
+/* 退场（当前张淡出后重新入栈到最底） */
+.module-home .home-photo.pos-out {
+  transform: translate(0, -40px) scale(0.96) rotate(0deg);
+  opacity: 0;
+  filter: brightness(0.6) blur(3px);
+  z-index: 5;
+  pointer-events: none;
+}
+/* 景深栈之外的照片：缩于中央后方，轮换时再浮现 */
+.module-home .home-photo.pos-hidden {
+  transform: translateZ(-120px) scale(0.62) rotate(0deg);
+  opacity: 0;
+  filter: brightness(0.5) blur(5px);
+  z-index: 1;
+  pointer-events: none;
+}
+/* 初始进入动画 */
+.module-home .home-photo.enter {
+  animation: photoEnter 0.8s cubic-bezier(0.22, 0.7, 0.28, 1) both;
+}
+@keyframes photoEnter {
+  from { opacity: 0; transform: translate(0, 30px) scale(0.92); }
+  to { opacity: 1; }
+}
+.module-home .home-stage-cap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -30px;
+  text-align: center;
+  font-family: var(--serif);
+  font-size: 14px;
+  letter-spacing: 0.28em;
+  color: #E0D8C6;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+}
+/* 窄屏：预览区隐藏，避免与文字区拥挤 */
+@media (max-width: 920px) {
+  .module-home .home-hero { flex-direction: column; gap: 28px; }
+  .module-home .home-stage { display: none; }
 }
 
 /* ============================================================
@@ -499,9 +785,14 @@ select:focus-visible,
 
 .module-desc {
   font-size: 13px;
-  color: var(--ink-soft);
+  color: var(--ink);                        /* 非首页模块文字统一深色 */
   margin-top: 6px;
   padding-left: 16px;
+}
+
+/* 兜底：除首页外的模块，所有文字强制深色（首页保持亮色） */
+.module:not(.module-home) {
+  color: var(--ink);
 }
 
 /* ---------- 表单 ---------- */
@@ -1586,12 +1877,18 @@ select:focus-visible,
   margin: 10px auto 34px;
   padding: 14px 20px;
   font-size: 12.5px;
-  color: var(--vermilion-deep);
+  color: var(--vermilion-deep);               /* 非首页：深色字 */
   background: rgba(169, 50, 38, 0.06);
   border: 1px solid rgba(169, 50, 38, 0.25);
   border-radius: 8px;
   text-align: center;
   line-height: 1.8;
+}
+body.home-active .tcm-disclaimer {
+  color: rgba(244, 241, 233, 0.85);
+  background: rgba(20, 26, 22, 0.55);
+  border-color: rgba(201, 160, 99, 0.35);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
 }
 
 /* ---------- 响应式 ---------- */

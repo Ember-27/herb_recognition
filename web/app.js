@@ -156,18 +156,115 @@ async function postForm(url, formData) {
 /* ---------- 页签切换 ---------- */
 $$(".tab").forEach(function (tab) {
   tab.addEventListener("click", function () {
-    $$(".tab").forEach(t => { t.classList.remove("active"); t.setAttribute("aria-selected", "false"); });
-    $$(".module").forEach(m => m.classList.remove("active"));
-    tab.classList.add("active");
-    tab.setAttribute("aria-selected", "true");
-    $("#" + tab.dataset.tab).classList.add("active");
-    // 图谱模块首次激活时自动加载
-    if (tab.dataset.tab === "graph" && !window._graphLoaded) {
-      loadGraph("");
-      window._graphLoaded = true;
-    }
+    switchTab(tab.dataset.tab);
   });
 });
+
+// 首页 CTA 等任意位置跳转到指定模块（与其它模块平行）
+function switchTab(name) {
+  var tab = $('[data-tab="' + name + '"]');
+  if (!tab) return;
+  $$(".tab").forEach(t => { t.classList.remove("active"); t.setAttribute("aria-selected", "false"); });
+  $$(".module").forEach(m => m.classList.remove("active"));
+  tab.classList.add("active");
+  tab.setAttribute("aria-selected", "true");
+  $("#" + name).classList.add("active");
+  // 图谱模块首次激活时自动加载
+  if (name === "graph" && !window._graphLoaded) {
+    loadGraph("");
+    window._graphLoaded = true;
+  }
+  // 仅在首页使用亮色页头/导航，其他模块恢复深色
+  if (name === "home") document.body.classList.add("home-active");
+  else document.body.classList.remove("home-active");
+}
+
+$$(".home-go").forEach(function (btn) {
+  btn.addEventListener("click", function () { switchTab(btn.dataset.go); });
+});
+
+// 初始化：首屏只激活「首页」，纠正 HTML 中可能出现的多余 active
+switchTab("home");
+
+/* ============================================================
+   首页右侧：中药预览照片堆叠（景深轮播）
+   多张药材照片错位叠放，当前张清晰、后方逐张缩小模糊下移，
+   定时轮换，使后一张从景深里「一张张浮现」。
+   ============================================================ */
+(function () {
+  var HERBS = [
+    { img: "images/showcase/chenpi.jpg",    name: "陈皮",   py: "chén pí" },
+    { img: "images/showcase/gancao.jpg",    name: "甘草",   py: "gān cǎo" },
+    { img: "images/showcase/gouqizi.jpg",   name: "枸杞子", py: "gǒu qǐ zǐ" },
+    { img: "images/showcase/honghua.jpg",   name: "红花",   py: "hóng huā" },
+    { img: "images/showcase/huangqin.jpg",  name: "黄芩",   py: "huáng qín" },
+    { img: "images/showcase/jinyihua.jpg",  name: "金银花", py: "jīn yín huā" },
+    { img: "images/showcase/shihu.jpg",     name: "石斛",   py: "shí hú" }
+  ];
+  var stage = document.getElementById("homePreview");
+  if (!stage) return;
+
+  var photos = HERBS.map(function (h, i) {
+    var el = document.createElement("div");
+    el.className = "home-photo enter";
+    var img = document.createElement("img");
+    img.src = h.img;
+    img.alt = h.name;
+    var meta = document.createElement("div");
+    meta.className = "home-photo-meta";
+    var nm = document.createElement("span");
+    nm.className = "home-name";
+    nm.textContent = h.name;
+    var py = document.createElement("span");
+    py.className = "home-py";
+    py.textContent = h.py;
+    meta.appendChild(nm);
+    meta.appendChild(py);
+    el.appendChild(img);
+    el.appendChild(meta);
+    el.title = h.name + " " + h.py;
+    el.addEventListener("click", function () { switchTab("recognize"); });
+    el.addEventListener("animationend", function () { el.classList.remove("enter"); });
+    stage.appendChild(el);
+    return el;
+  });
+
+  // order：当前可见顺序，order[0] 为最前（清晰）那张
+  var order = photos.map(function (_, i) { return i; });
+  var VISIBLE = 4; // 景深栈中可见张数
+
+  function render() {
+    photos.forEach(function (el, i) {
+      var p = order.indexOf(i);
+      el.classList.remove("pos-0", "pos-1", "pos-2", "pos-3", "pos-hidden", "pos-out");
+      el.classList.add(p < VISIBLE ? ("pos-" + p) : "pos-hidden");
+    });
+  }
+  render();
+
+  var timer = null;
+  var DELAY = 2800;
+  function tick() {
+    // 队首移到队尾：原当前张退入景深后方，下一张浮现到最前
+    order.push(order.shift());
+    render();
+  }
+  function start() {
+    if (timer) return;
+    timer = setInterval(tick, DELAY);
+  }
+  function stop() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  // 仅首页激活时播放，切走时暂停
+  var _origSwitch = switchTab;
+  window.switchTab = function (name) {
+    _origSwitch(name);
+    if (name === "home") start(); else stop();
+  };
+  start();
+})();
 
 /* ============================================================
    通用上传组件（拖拽 + 点击 + Ctrl+V 粘贴）
@@ -190,7 +287,20 @@ function initUploader(root, key) {
   var cropOverlay = key === "recognize" ? $("#crop-overlay") : null;
 
   function exitCrop() {
-    if (cropOverlay) { cropOverlay.hidden = true; cropOverlay.parentElement.classList.remove("cropping"); }
+    if (cropOverlay) {
+      cropOverlay.hidden = true;
+      var stageEl = cropOverlay.parentElement;
+      if (stageEl) {
+        stageEl.classList.remove("cropping");
+        // 移除已确认的选区痕迹（.crop-mark 直接挂在 stage 上，仅靠清空 cropList 不会消失）
+        stageEl.querySelectorAll(".crop-mark").forEach(function (el) { el.remove(); });
+      }
+    }
+    // 清空选区列表 chip 并隐藏"清除选框"按钮（仅在 recognize 模块存在）
+    var cropListWrap = $("#crop-list");
+    if (cropListWrap) cropListWrap.innerHTML = "";
+    var btnClearCrops = $("#btn-crop-clear");
+    if (btnClearCrops) btnClearCrops.hidden = true;
     if (cropActions) {
       $("#btn-crop").hidden = false;
       $("#btn-crop-confirm").hidden = true;
@@ -209,7 +319,6 @@ function initUploader(root, key) {
     drop.style.display = "none";
     if (cropActions) {
       cropActions.hidden = false;
-      $("#btn-crop-reset").hidden = true;  // 有"重新上传"按钮即可，reset 仅在框选态显示
     }
     if (key === "recognize") uploadState.recognize.cropList = [];
     exitCrop();
@@ -232,6 +341,7 @@ function initUploader(root, key) {
       cropActions.hidden = true;
       exitCrop();
     }
+    // 注：实际触发清除的是 [data-clear]（重新上传按钮），$("#btn-crop-reset") 已移除
   });
 
   ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => {
@@ -288,7 +398,7 @@ function initCrop() {
   var btnCrop = $("#btn-crop");
   var btnConfirm = $("#btn-crop-confirm");
   var btnCancel = $("#btn-crop-cancel");
-  var btnReset = $("#btn-crop-reset");
+  var btnReset = null;
   var btnClearCrops = $("#btn-crop-clear");
   var cropListWrap = $("#crop-list");
   if (!img || !overlay || !stage) return;
@@ -545,7 +655,7 @@ document.addEventListener("paste", function (e) {
           uploadState.recognize.cropList = [];
           if (typeof syncIdentifyBtn === "function") syncIdentifyBtn();
           var ca = $("#crop-actions");
-          if (ca) { ca.hidden = false; $("#btn-crop-reset").hidden = true; }
+          if (ca) { ca.hidden = false; }
           var ov = $("#crop-overlay");
           if (ov) { ov.hidden = true; ov.parentElement.classList.remove("cropping"); }
         }
@@ -1375,27 +1485,43 @@ function renderGradcam(stage, info) {
   var alphaVal = $("#gradcam-alpha-val");
   var infoBox = $("#gradcam-info");
 
-  var img = new Image();
-  img.onload = function () {
-    var W = img.naturalWidth, H = img.naturalHeight;
-    var S = Math.max(W, H);
-    canvas.width = S; canvas.height = S;
-    var ctx = canvas.getContext("2d");
+  var S = 448;  // 画布边长（热力固定 224x224，铺满即可）
+  canvas.width = S; canvas.height = S;
+  var ctx = canvas.getContext("2d");
 
-    function draw() {
-      var a = alphaInput.value / 100;
-      ctx.clearRect(0, 0, S, S);
-      ctx.globalAlpha = 1;
-      ctx.drawImage(img, 0, 0, S, S);  // 底图（overlay 已含 55% 原图）
-      ctx.globalAlpha = a;              // 滑块控制叠加强度
-      ctx.drawImage(img, 0, 0, S, S);  // 二次绘制增强热力
-      ctx.globalAlpha = 1;
-      alphaVal.textContent = alphaInput.value + "%";
+  var heatImg = new Image();   // 后端返回的纯热力层
+  var baseImg = new Image();   // 本地上传原图
+  var baseSrc = uploadState.gradcam.preview;
+
+  function draw() {
+    var a = alphaInput.value / 100;   // 0 → 纯原图，1 → 纯热力
+    ctx.clearRect(0, 0, S, S);
+    ctx.globalAlpha = 1;
+    // 1) 原图垫底（contain 等比居中，避免拉伸变形）
+    if (baseImg.naturalWidth) {
+      var bw = baseImg.naturalWidth, bh = baseImg.naturalHeight;
+      var scale = Math.min(S / bw, S / bh);
+      var dw = bw * scale, dh = bh * scale;
+      ctx.drawImage(baseImg, (S - dw) / 2, (S - dh) / 2, dw, dh);
     }
-    alphaInput.oninput = draw;
-    draw();
-  };
-  img.src = gradcamOverlayData;
+    // 2) 热力层：滑块控制透明度
+    ctx.globalAlpha = a;
+    ctx.drawImage(heatImg, 0, 0, S, S);
+    ctx.globalAlpha = 1;
+    alphaVal.textContent = alphaInput.value + "%";
+  }
+
+  function onLoad() {
+    if (heatImg.complete && (!baseSrc || baseImg.complete)) draw();
+  }
+
+  alphaInput.oninput = draw;
+  heatImg.onload = onLoad;
+  heatImg.src = gradcamOverlayData;
+  if (baseSrc) {
+    baseImg.onload = onLoad;
+    baseImg.src = baseSrc;
+  }
   infoBox.innerHTML = mdToHtml(info);
 }
 

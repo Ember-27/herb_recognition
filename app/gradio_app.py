@@ -897,9 +897,8 @@ class HerbDemo:
         except AttributeError:
             cmap_jet = matplotlib.colormaps["jet"]  # matplotlib >= 3.9
         heat = cmap_jet(cam)[:, :, :3]              # [224,224,3] 0-1
-        base = np.array(img.resize((224, 224)), dtype=np.float32) / 255.0
-        overlay = (base * 0.55 + heat * 0.45)
-        overlay = (overlay * 255).astype(np.uint8)
+        # 返回纯热力层，由前端控制与原图的混合强度（滑块 0→100 即 纯原图→纯热力）
+        overlay = (heat * 255).astype(np.uint8)
 
         label = self.idx2label[pred]
         info = (f"**Grad-CAM 关注区域**（Top-1: **{label}**，置信度 {probs[pred] * 100:.1f}%"

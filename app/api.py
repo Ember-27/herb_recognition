@@ -500,17 +500,12 @@ async def clear_favorites_route(type: str = ""):
     return clear_favorites(type or None)
 
 
-# 首页落地页（优先于 StaticFiles 兜底）：/ 指向 home.html，/app 指向原功能页 index.html
+# 首页落地页（优先于 StaticFiles 兜底）：/ 直接指向 index.html（含首页模块的工作台）
 from fastapi.responses import FileResponse  # noqa: E402
 
 @app.get("/", include_in_schema=False)
 def home_page():
-    """首页落地页：中草药多模态识别系统导引页。"""
-    return FileResponse(os.path.join(WEB_DIR, "home.html"))
-
-@app.get("/app", include_in_schema=False)
-def workbench_page():
-    """原功能工作台（5 大功能 tab 页）。"""
+    """入口页面：含「首页」模块的新中式工作台。"""
     return FileResponse(os.path.join(WEB_DIR, "index.html"))
 
 
