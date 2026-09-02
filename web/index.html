@@ -18,19 +18,31 @@
   <div class="tcm-header-badge">科普演示 · 非医疗诊断</div>
 </header>
 
-<!-- ======= 书签式页签导航 ======= -->
-<nav class="tcm-tabs" role="tablist">
-  <button class="tab active" data-tab="recognize" role="tab" aria-selected="true">图片识别</button>
-  <button class="tab" data-tab="search" role="tab" aria-selected="false">特性检索</button>
-  <button class="tab" data-tab="gradcam" role="tab" aria-selected="false">Grad-CAM</button>
-  <button class="tab" data-tab="chat" role="tab" aria-selected="false">AI 对话</button>
-  <button class="tab" data-tab="graph" role="tab" aria-selected="false">关系图谱</button>
+<!-- ======= 左侧悬浮模块导航 ======= -->
+<nav class="side-nav" role="tablist" aria-label="模块导航">
+  <div class="side-nav-list">
+    <button class="tab side-link active" data-tab="recognize" role="tab" aria-selected="true">
+      <span class="side-link-ic" aria-hidden="true">⊕</span><span class="side-link-tx">图片识别</span>
+    </button>
+    <button class="tab side-link" data-tab="search" role="tab" aria-selected="false">
+      <span class="side-link-ic" aria-hidden="true">⌕</span><span class="side-link-tx">特性检索</span>
+    </button>
+    <button class="tab side-link" data-tab="gradcam" role="tab" aria-selected="false">
+      <span class="side-link-ic" aria-hidden="true">◉</span><span class="side-link-tx">Grad-CAM</span>
+    </button>
+    <button class="tab side-link" data-tab="chat" role="tab" aria-selected="false">
+      <span class="side-link-ic" aria-hidden="true">✎</span><span class="side-link-tx">AI 对话</span>
+    </button>
+    <button class="tab side-link" data-tab="graph" role="tab" aria-selected="false">
+      <span class="side-link-ic" aria-hidden="true">⬡</span><span class="side-link-tx">关系图谱</span>
+    </button>
+  </div>
 </nav>
 
 <main class="tcm-main">
 
   <!-- ======= 模块 1：图片识别（左图右档 · 工作台双栏） ======= -->
-  <section id="recognize" class="module module-recognize active" role="tabpanel">
+  <section id="recognize" class="module module-recognize active" role="tabpanel" data-bg="taoism">
     <div class="module-head">
       <h2>图片识别</h2>
       <p class="module-desc">上传药材图片，AI 给出 Top-5 识别结果与药性、配伍等完整档案。</p>
@@ -101,7 +113,15 @@
           <div id="recognize-cards"></div>
         </div>
         <div class="rec-archive-empty" id="recognize-empty">
-          <div class="rec-empty-icon" aria-hidden="true">🪪</div>
+          <div class="rec-empty-icon" aria-hidden="true">
+            <svg width="52" height="52" viewBox="0 0 52 52" fill="none"
+                 stroke="var(--vermilion)" stroke-width="1.6"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 14 C13 11 19 11 26 13 C33 11 39 11 44 14 L44 40 C39 37 33 37 26 39 C19 37 13 37 8 40 Z"/>
+              <path d="M26 13 L26 39"/>
+              <path d="M14 21 L22 21 M14 26 L22 26 M30 21 L38 21 M30 26 L38 26"/>
+            </svg>
+          </div>
           <p>上传图片并点击「开始识别」<br>药材档案将在此处展开</p>
         </div>
       </div>
@@ -109,7 +129,7 @@
   </section>
 
   <!-- ======= 模块 2：特性检索（检索台 · 上查询下结果列） ======= -->
-  <section id="search" class="module module-search" role="tabpanel">
+  <section id="search" class="module module-search" role="tabpanel" data-bg="plum">
     <div class="module-head">
       <h2>特性检索</h2>
       <p class="module-desc">按「性味 + 归经 + 功效」描述检索药材，命中条件越多的排在前面。</p>
@@ -146,7 +166,7 @@
   </section>
 
   <!-- ======= 模块 3：Grad-CAM（左图右解读 · 对照工作台） ======= -->
-  <section id="gradcam" class="module module-gradcam" role="tabpanel">
+  <section id="gradcam" class="module module-gradcam" role="tabpanel" data-bg="dendrobium">
     <div class="module-head">
       <h2>Grad-CAM 关注区域</h2>
       <p class="module-desc">热力图展示模型判定药材类别时主要依据的图像部位，拖动滑块调节热力强度。</p>
@@ -195,7 +215,7 @@
   </section>
 
   <!-- ======= 模块 4：AI 对话（左快捷竖栏 + 右对话室） ======= -->
-  <section id="chat" class="module module-chat" role="tabpanel">
+  <section id="chat" class="module module-chat" role="tabpanel" data-bg="chinese-medicine">
     <div class="module-head">
       <h2>AI 对话</h2>
       <p class="module-desc">与 AI 讨论药材辨识与药性知识，可上传图片提问，回答附知识库来源。</p>
@@ -255,7 +275,7 @@
   </section>
 
   <!-- ======= 模块 5：药材关系图谱（力导向网络图） ======= -->
-  <section id="graph" class="module" role="tabpanel">
+  <section id="graph" class="module" role="tabpanel" data-bg="natural-medicine">
     <div class="module-head">
       <h2>药材关系图谱</h2>
       <p class="module-desc">力导向网络图：节点为药材，连线为关系（相须相使 / 十八反 / 十九畏 / 组成）。</p>
@@ -275,6 +295,7 @@
       <div class="graph-info" id="graph-info"></div>
       <div class="graph-tip" id="graph-tip"></div>
     </div>
+    <div class="graph-filter-tag" id="graph-filter-tag" hidden></div>
     <div class="graph-legend" id="graph-legend"></div>
     <div class="graph-hint">
       提示：可拖拽节点 / 滚轮缩放 / 按住空白拖动平移；点击节点查看详情，点击空白处取消选中。
@@ -310,7 +331,33 @@
     <button class="fav-tab" data-favtab="chat" type="button">对话</button>
   </div>
   <div id="favList" class="fav-list"></div>
-  <div id="favEmpty" class="fav-empty" hidden>暂无收藏，点击内容上的 ★ 即可收藏。</div>
+  <div id="favEmpty" class="fav-empty" hidden>
+    <svg class="fav-empty-icon" viewBox="0 0 96 96" fill="none"
+         stroke="var(--vermilion)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <g id="favIconHerb">
+        <!-- 摊开的线装书 -->
+        <path d="M22 34 C30 32 40 32 48 36" />
+        <path d="M48 36 C56 32 66 32 74 34" />
+        <path d="M48 36 L48 62" />
+        <path d="M22 34 L22 64 L48 60" />
+        <path d="M74 34 L74 64 L48 60" />
+        <!-- 从书脊长出的药草 -->
+        <path d="M48 36 C48 26 46 18 44 10" />
+        <path d="M44 24 C36 22 30 16 26 8" />
+        <path d="M46 16 C54 14 60 8 62 2" />
+        <!-- 土/基座 + 右上空心星 -->
+        <path d="M24 70 H72 M30 76 H66" />
+        <path d="M78 10 L80.6 17.9 L89 17.9 L82.2 22.8 L84.8 30.7 L78 25.8 L71.2 30.7 L73.8 22.8 L67 17.9 L75.4 17.9 Z" />
+      </g>
+      <g id="favIconChat" hidden>
+        <!-- 对话气泡 + 省略号 -->
+        <path d="M24 28 H72 A6 6 0 0 1 78 34 V58 A6 6 0 0 1 72 64 H52 L42 74 L45 64 H24 A6 6 0 0 1 18 58 V34 A6 6 0 0 1 24 28 Z" />
+        <path d="M38 46 H58 M38 52 H52" />
+      </g>
+    </svg>
+    <div class="fav-empty-title" id="favEmptyTitle"></div>
+    <div class="fav-empty-hint" id="favEmptyHint"></div>
+  </div>
 </div>
 <div id="favMask" class="fav-mask" hidden></div>
 

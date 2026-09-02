@@ -733,9 +733,15 @@ function renderFavList() {
   var items = favTab === "herb" ? (favData.herbs || []) : (favData.chats || []);
   if (!items.length) {
     empty.hidden = false;
-    empty.textContent = favTab === "herb"
-      ? "暂无收藏药材，点击药材卡片上的 ★ 即可收藏。"
-      : "暂无收藏对话，点击对话回答下的 ★ 即可收藏。";
+    $("#favIconHerb").hidden = favTab !== "herb";
+    $("#favIconChat").hidden = favTab === "herb";
+    if (favTab === "herb") {
+      $("#favEmptyTitle").textContent = "还没有收藏药材";
+      $("#favEmptyHint").textContent  = "点击药材卡片上的 ★，把喜欢的本草收进册子";
+    } else {
+      $("#favEmptyTitle").textContent = "还没有收藏对话";
+      $("#favEmptyHint").textContent  = "点击回答旁的 ★，保存你和本草的对话";
+    }
     return;
   }
   empty.hidden = true;
@@ -1887,16 +1893,56 @@ var GRAPH_REL_LABEL = {
 };
 
 var graphData = { nodes: [], links: [] };
+var graphDataAll = null;                // 全体药材全图（每次加载全图时更新），筛选始终基于全体药材；点空白也回到此全图
 var graphNodes = [], graphLinks = [], graphMeta = {};
 var graphSelected = null, graphHl = new Set();
+// 多条件叠加筛选：各维度之间为 AND，同一维度多个值为 OR
+// categories: 功效分类(可多选)  property: 药性  toxicity: 毒性  meridian: 归经
+var graphFilters = { categories: [], property: [], toxicity: [], meridian: [] };
+var graphFiltersBak = null;           // 点药材查看关联时暂存当前筛选，点空白再恢复
+var graphFilterLocked = false;        // 药材关联视图中屏蔽条件选择（图例禁用），点空白恢复
+var graphFilterMode = "and";          // "and"=交集(满足所有维度)  "or"=并集(满足任一维度)
+
+// —— 药性/毒性/归经 内部归类定义（仅影响筛选图例，不改数据）——
+var GRAPH_FLAVORS = ["甘", "苦", "辛", "酸", "咸", "淡", "涩"];   // 五味
+var GRAPH_NATURES = ["寒", "热", "温", "凉", "平"];               // 四气
+var GRAPH_DEGREES = ["微", "大"];                                  // 程度（苦+微 = 微苦）
+var GRAPH_MERIDIANS = ["心包", "三焦", "大肠", "小肠", "膀胱", "肝", "心", "脾", "肺", "肾", "胃", "胆"]; // 十二正经
+var GRAPH_MER_SYSTEMS = [  // 归经 → 脏腑系统（表里对）
+  { label: "肝胆",      vals: ["肝", "胆"] },
+  { label: "心·小肠",   vals: ["心", "小肠"] },
+  { label: "脾胃",      vals: ["脾", "胃"] },
+  { label: "肺·大肠",   vals: ["肺", "大肠"] },
+  { label: "肾·膀胱",   vals: ["肾", "膀胱"] },
+  { label: "心包·三焦", vals: ["心包", "三焦"] }
+];
+var GRAPH_TOX_GROUPS = [   // 毒性 → 程度归类
+  { label: "无毒", vals: ["无毒"] },
+  { label: "低毒", vals: ["小毒", "微毒"] },
+  { label: "高毒", vals: ["有毒", "大毒"] }
+];
+
+// 从归经文本拆出所含十二经（独立子串匹配，兼容"心包""三焦"）
+function graphMeridians(text) {
+  var out = [], t = text || "";
+  GRAPH_MERIDIANS.forEach(function (m) { if (t.indexOf(m) !== -1) out.push(m); });
+  return out;
+}
+// 基于全体药材统计命中数（图例按钮徽标），锁定态也用全体数据
+function graphLegendHitCount(matchFn) {
+  var nodes = (graphDataAll && graphDataAll.nodes && graphDataAll.nodes.length) ? graphDataAll.nodes : graphNodes;
+  return nodes.filter(function (n) { return n.type === "herb" && matchFn(n); }).length;
+}
 var graphZoom = 1, graphPanX = 0, graphPanY = 0;
 var graphPulse = 0;                  // 聚焦节点光环脉动计时
 var GRAPH_FOCUS_COLOR = "#D4A017";  // 聚焦药材金色
 var graphViewLock = false;           // 视图锁定：焦点节点钉在屏幕正中
+var graphSimEnabled = true;          // 力导向开关：筛选/选中后冻结，使 fit 视图稳定不漂出
 var graphN = 0, graphRep = 16000;
 
 function graphReset() {
   graphSelected = null; graphHl.clear();
+  graphFilters = { categories: [], property: [], toxicity: [], meridian: [] };
   graphZoom = 1; graphPanX = 0; graphPanY = 0;
   graphPulse = 0; graphViewLock = false;
 }
@@ -2028,29 +2074,130 @@ function graphSimulate() {
   }
 }
 
+// 判断单节点在某一维度上是否命中。
+// 同维度多值也遵循全局模式 graphFilterMode：
+//   and → 节点需命中该维度的【所有】已选值（如同时具多个分类）
+//   or  → 命中该维度的【任一】已选值即可
+function graphDimHit(n, dim, vals) {
+  if (!vals.length) return false;
+  var nodeVals;
+  if (dim === "categories") {
+    nodeVals = n.categories || [];
+  } else if (dim === "property") {
+    // 内部归类：子串匹配。选中"苦"→命中 苦寒/微苦/辛苦温…；选"苦"+"微"(交集)→微苦系(苦的程度)
+    var pt = n.property || "";
+    var hitCount = vals.filter(function (v) { return pt.indexOf(v) !== -1; }).length;
+    return graphFilterMode === "or" ? hitCount > 0 : hitCount === vals.length;
+  } else if (dim === "toxicity") {
+    nodeVals = [n.toxicity || "无毒"];
+  } else if (dim === "meridian") {
+    nodeVals = graphMeridians(n.meridian);
+  } else {
+    return false;
+  }
+  var hitCount = vals.filter(function (v) { return nodeVals.indexOf(v) !== -1; }).length;
+  return graphFilterMode === "or" ? hitCount > 0 : hitCount === vals.length;
+}
+
+// 判断某节点是否满足当前多条件筛选
+//  graphFilterMode === "and"：需命中所有已激活维度（交集）
+//  graphFilterMode === "or" ：命中任一已激活维度即可（并集）
+//  注：维度之内（如同选多个分类）同样遵循上述模式。
+function graphNodeMatch(n) {
+  if (!graphHasFilter()) return true;
+  var f = graphFilters;
+  var dims = [
+    ["categories", f.categories],
+    ["property", f.property],
+    ["toxicity", f.toxicity],
+    ["meridian", f.meridian]
+  ].filter(function (d) { return d[1].length; });
+  if (!dims.length) return true;
+  var dimHits = dims.map(function (d) { return graphDimHit(n, d[0], d[1]); });
+  return graphFilterMode === "or"
+    ? dimHits.some(Boolean)
+    : dimHits.every(Boolean);
+}
+
+// 当前是否存在任意生效的筛选条件
+function graphHasFilter() {
+  var f = graphFilters;
+  return !!(f.categories.length || f.property.length || f.toxicity.length || f.meridian.length);
+}
+
+// 确保当前图数据为「全体药材全图」：当处于某药材子图（点击药材后的关联视图）
+// 时，先切回全体药材再应用筛选，使每次筛选范围都是全体药材而非子图。
+// 保留已设置的筛选条件 graphFilters，仅还原底层图数据。
+function graphEnsureAll() {
+  if (graphDataAll && graphData !== graphDataAll) {
+    graphData = graphDataAll;
+    graphSelected = null;     // 离开药材关联视图，筛选基于全体药材
+    graphBuild();
+    graphBuildLegend();
+  }
+}
+
+// 计算某节点当前可见层级（仅在有筛选或选中时区分）
+//  返回 "hi" 高亮(选中关联网) | "dim" 虚化(命中筛选但无关) | "hide" 隐藏
+function graphNodeLevel(n) {
+  if (graphSelected) {
+    // 选中态：只看与该药材相关的图谱（同搜索结果），选中节点及其一阶邻居高亮，
+    // 其余直接隐藏；不在关联药材中再套用当前筛选条件（不再虚化命中筛选的节点）。
+    return graphHl.has(n.id) ? "hi" : "hide";
+  }
+  if (graphHasFilter()) {
+    return graphNodeMatch(n) ? "hi" : "hide";
+  }
+  return "hi";  // 无筛选无选中：全部正常显示
+}
+
 function graphUpdateHighlight() {
   graphHl.clear();
   var key = graphSelected || null;
-  if (!key) {
-    // 无选中时：若存在聚焦节点，默认高亮「所有聚焦节点」及其一阶邻居，
-    // 让多个聚焦草药同时全亮并闪动（而非只取最后一味）
-    var foci = graphNodes.filter(function (n) { return n.focus; });
-    if (foci.length) {
-      foci.forEach(function (f) {
-        graphHl.add(f.id);
-        graphLinks.forEach(function (l) {
-          if (l.source === f.id) graphHl.add(l.target);
-          if (l.target === f.id) graphHl.add(l.source);
-        });
-      });
-    }
-  } else {
-    graphHl.add(key.id);
+
+  // 基础集合：筛选命中（无选中时也作为高亮集）
+  if (graphHasFilter() && !key) {
+    graphNodes.forEach(function (n) {
+      if (n.type === "herb" && graphNodeMatch(n)) graphHl.add(n.id);
+    });
     graphLinks.forEach(function (l) {
-      if (l.source === key.id) graphHl.add(l.target);
-      if (l.target === key.id) graphHl.add(l.source);
+      var a = graphMeta[l.source], b = graphMeta[l.target];
+      if (!a || !b) return;
+      var aHit = a.type !== "herb" || graphNodeMatch(a);
+      var bHit = b.type !== "herb" || graphNodeMatch(b);
+      if (graphFilterMode === "or") {
+        if ((a.type === "herb" && graphNodeMatch(a)) || (b.type === "herb" && graphNodeMatch(b))) {
+          graphHl.add(a.id); graphHl.add(b.id);
+        }
+      } else if (aHit && bHit) {
+        graphHl.add(a.id); graphHl.add(b.id);
+      }
     });
   }
+
+  if (!key) {
+    // 无选中无筛选：高亮聚焦节点及其一阶邻居
+    if (!graphHasFilter()) {
+      var foci = graphNodes.filter(function (n) { return n.focus; });
+      if (foci.length) {
+        foci.forEach(function (f) {
+          graphHl.add(f.id);
+          graphLinks.forEach(function (l) {
+            if (l.source === f.id) graphHl.add(l.target);
+            if (l.target === f.id) graphHl.add(l.source);
+          });
+        });
+      }
+    }
+    return;
+  }
+
+  // 已选中某节点：高亮集合 = 选中节点 + 其一阶邻居（关系网）；其余由 graphNodeLevel 决定虚化/隐藏
+  graphHl.add(key.id);
+  graphLinks.forEach(function (l) {
+    if (l.source === key.id) graphHl.add(l.target);
+    if (l.target === key.id) graphHl.add(l.source);
+  });
 }
 
 function graphDraw() {
@@ -2069,8 +2216,12 @@ function graphDraw() {
     var a = graphMeta[l.source], b = graphMeta[l.target];
     if (!a || !b) return;
     var st = GRAPH_REL_STYLE[l.relation] || GRAPH_REL_STYLE.category;
-    var active = !graphSelected || (graphHl.has(a.id) && graphHl.has(b.id));
-    ctx.globalAlpha = active ? 0.85 : 0.08;
+    var la = graphNodeLevel(a), lb = graphNodeLevel(b);
+    var alpha;
+    if (la === "hi" && lb === "hi") alpha = 0.85;              // 关联网：高亮
+    else if ((la === "hi" || la === "dim") && (lb === "hi" || lb === "dim")) alpha = 0.1;  // 筛选命中但非关联：虚化
+    else alpha = 0;                                            // 完全无关：隐藏
+    ctx.globalAlpha = alpha;
     ctx.strokeStyle = st.color;
     ctx.lineWidth = st.width;
     ctx.setLineDash(st.dash);
@@ -2082,10 +2233,17 @@ function graphDraw() {
   });
 
   graphNodes.forEach(function (n) {
-    var active = !graphSelected || graphHl.has(n.id);
-    ctx.globalAlpha = active ? 1 : 0.13;
+    var lvl = graphNodeLevel(n);
+    // 三态：hi 高亮 / dim 虚化 / hide 隐藏
+    ctx.globalAlpha = lvl === "hi" ? 1 : lvl === "dim" ? 0.16 : 0;
     if (n.type === "herb") {
-      var r = n.focus ? 16 : 11;
+      // 名称标签：不再截断，按圆内可容纳宽度显示
+      var label = n.id;
+      ctx.font = (n.focus ? "bold 13px" : "13px") + " 'Microsoft YaHei', sans-serif";
+      var labelW = ctx.measureText(label).width;
+      // 圆半径：取基础值与"包住文字所需半径"的较大者，确保名称在圆内
+      var baseR = n.focus ? 30 : 24;
+      var r = Math.max(baseR, labelW / 2 + 9);
       var tox = n.toxicity || "无毒";
       var toxic = (tox === "大毒" || tox === "有毒");
       if (toxic) {
@@ -2158,9 +2316,8 @@ function graphDraw() {
         ctx.stroke();
       }
       ctx.fillStyle = "#fff";
-      ctx.font = (n.focus ? "bold 12px" : "11px") + " 'Microsoft YaHei', sans-serif";
+      ctx.font = (n.focus ? "bold 13px" : "13px") + " 'Microsoft YaHei', sans-serif";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      var label = n.id.length > 4 ? n.id.slice(0, 4) + "…" : n.id;
       ctx.fillText(label, n.x, n.y + 1);
     } else {
       var s = 9;
@@ -2256,10 +2413,23 @@ function graphCanvasToWorld(e) {
   return { x: (mx - graphPanX) / graphZoom, y: (my - graphPanY) / graphZoom };
 }
 
+function graphNodeRadius(n) {
+  if (n.type !== "herb") return 9;
+  var label = n.id;
+  // 测量文字宽度需临时设置字体（与绘制一致）；自身获取 ctx，避免依赖 graphDraw 局部变量
+  var gctx = $("#graph-canvas").getContext("2d");
+  gctx.font = (n.focus ? "bold 13px" : "13px") + " 'Microsoft YaHei', sans-serif";
+  var labelW = gctx.measureText(label).width;
+  var baseR = n.focus ? 30 : 24;
+  return Math.max(baseR, labelW / 2 + 9);
+}
+
 function graphHitTest(p) {
   for (var i = graphNodes.length - 1; i >= 0; i--) {
     var n = graphNodes[i];
-    var r = n.type === "herb" ? (n.focus ? 16 : 11) : 9;
+    // 隐藏节点（被筛选裁掉）关闭点击接口，不可选中/拖拽
+    if (graphNodeLevel(n) === "hide") continue;
+    var r = graphNodeRadius(n);
     var dx = n.x - p.x, dy = n.y - p.y;
     if (dx * dx + dy * dy <= (r + 4) * (r + 4)) return n;
   }
@@ -2273,17 +2443,16 @@ function graphInitEvents() {
   canvas.addEventListener("mousedown", function (e) {
     var p = graphCanvasToWorld(e);
     var hit = graphHitTest(p);
-    if (hit && graphViewLock && hit.focus) {
-      // 锁定态：焦点节点钉死在中心，不参与拖动
-      return;
-    }
+    // 用户主动操作时解除视图锁定，尊重手动拖拽/平移
+    graphViewLock = false;
     if (hit) {
       draggingNode = hit;
       hit.fixed = true;
       hit.x = p.x; hit.y = p.y;
+      graphSimEnabled = true;   // 解冻力导向，拖拽时邻居可重排
       canvas.classList.add("dragging");
     } else {
-      // 空白处拖拽 = 平移视图（锁定态也允许，便于浏览整图）
+      // 空白处拖拽 = 平移视图
       panning = true;
       lastX = e.clientX; lastY = e.clientY;
       canvas.classList.add("dragging");
@@ -2330,9 +2499,41 @@ function graphInitEvents() {
     var p = graphCanvasToWorld(e);
     var hit = graphHitTest(p);
     if (hit) {
-      graphSelected = hit;
-      graphUpdateHighlight();
-      graphShowDetail(hit);
+      // 进入药材关联视图：显示「全体药材中与该药材有关的图谱」，与搜索该药材完全一致
+      // （无视当前筛选条件，筛选只做暂存，不渲染）。同时屏蔽条件选择，点空白再恢复。
+      // 仅在从筛选/全图进入时暂存当前筛选条件；若已在关联视图内继续点其他药材，
+      // 则保留最初暂存的筛选（graphFiltersBak），避免被空筛选覆盖而丢失「最近一次」。
+      if (!graphFilterLocked) {
+        graphFiltersBak = JSON.parse(JSON.stringify(graphFilters));
+      }
+      graphFilters = { categories: [], property: [], toxicity: [], meridian: [] };
+      graphFilterLocked = true;
+      // 加载完整搜索图谱（关联最全），不保留筛选（保持干净关联视图）
+      loadGraph(hit.id).then(function () {
+        graphShowDetail(graphMeta[hit.id] || null);
+        graphUpdateFilterTag();
+        graphBuildLegend();          // 同步图例为禁用态
+        // 药材关联子图先让力导向把初始堆叠/成环的节点展开散开（不冻结），
+        // 待布局初步稳定后再重新铺满显示，避免基于堆叠布局 fit 导致节点溢出。
+        graphSimEnabled = true;
+        graphDraw();
+        setTimeout(function () {
+          if (graphFilterLocked) { graphFitAll(); graphDraw(); }
+        }, 450);
+        $("#graph-focus").value = hit.id;
+      });
+    } else {
+      // 点击空白：若有快照则返回「筛选结果」（全库命中筛选的药材）；否则清除选中复位
+      if (graphRestorePrev()) {
+        $("#graph-info").style.display = "none";
+      } else {
+        graphSelected = null;
+        graphUpdateHighlight();
+        if (graphHasFilter()) graphFitToHighlight();  // 有筛选：复原到筛选结果聚焦视图
+        else graphFitAll();                          // 无筛选：复原到全图居中铺满
+        graphDraw();
+        $("#graph-info").style.display = "none";
+      }
     }
   });
 
@@ -2343,18 +2544,244 @@ function graphInitEvents() {
   }, { passive: false });
 }
 
+function graphUpdateFilterTag() {
+  var tag = $("#graph-filter-tag");
+  if (!tag) return;
+  if (!graphHasFilter()) { tag.hidden = true; tag.innerHTML = ""; return; }
+  var f = graphFilters;
+  var labels = [];
+  if (f.categories.length) labels.push("分类：" + f.categories.join("/"));
+  if (f.property.length) labels.push("药性：" + f.property.join("/"));
+  if (f.toxicity.length) labels.push("毒性：" + f.toxicity.join("/"));
+  if (f.meridian.length) labels.push("归经：" + f.meridian.join("/"));
+  var count = graphNodes.filter(function (n) {
+    return n.type === "herb" && graphNodeMatch(n);
+  }).length;
+  var modeLabel = graphFilterMode === "or" ? "并集(或)" : "交集(且)";
+  // 药材关联视图：条件已暂存并屏蔽，标签提示「查看关联中」，不显示清除按钮
+  if (graphFilterLocked) {
+    tag.hidden = false;
+    tag.innerHTML = '正在查看药材关联（已暂存筛选条件，点击空白处恢复）';
+    return;
+  }
+  tag.hidden = false;
+  tag.innerHTML = '当前筛选（' + modeLabel + '）：<b>' + labels.join(graphFilterMode === "or" ? " 或 " : " 且 ") + "</b>（" + count + " 味）" +
+    '<button type="button" class="graph-filter-clear" title="清除全部筛选">✕</button>';
+  var clr = tag.querySelector(".graph-filter-clear");
+  if (clr) clr.addEventListener("click", function () {
+    graphEnsureAll();   // 清除筛选也回到全体药材
+    graphFilters = { categories: [], property: [], toxicity: [], meridian: [] };
+    graphSelected = null;
+    graphUpdateHighlight(); graphBuildLegend(); graphDraw();
+  });
+}
+
 function graphBuildLegend() {
   var leg = $("#graph-legend");
   var items = [];
+  // —— 模式切换：交集 / 并集 ——
+  items.push('<div class="leg-group leg-mode-group"><span class="leg-group-title">筛选模式</span><div class="leg-group-items">');
+  items.push('<button type="button" class="item leg-mode' + (graphFilterMode === "and" ? " active" : "") +
+    '" data-mode="and" title="交集：药材须同时满足所有已选条件">交集（且）</button>');
+  items.push('<button type="button" class="item leg-mode' + (graphFilterMode === "or" ? " active" : "") +
+    '" data-mode="or" title="并集：药材满足任一已选条件即可">并集（或）</button>');
+  items.push('</div></div>');
+  // —— 第一维：功效分类（可多选 OR 叠加）——
+  items.push('<div class="leg-group"><span class="leg-group-title">功效分类（可多选叠加）</span><div class="leg-group-items">');
   Object.keys(GRAPH_CAT_COLORS).forEach(function (c) {
-    items.push('<span class="item"><span class="dot" style="background:' + GRAPH_CAT_COLORS[c] + '"></span>' + esc(c) + "</span>");
+    var on = graphFilters.categories.indexOf(c) !== -1;
+    items.push('<button type="button" class="item leg-cat' + (on ? " active" : "") +
+      '" data-cat="' + esc(c) + '" title="叠加筛选「' + esc(c) + '」分类草药">' +
+      '<span class="dot" style="background:' + GRAPH_CAT_COLORS[c] + '"></span>' + esc(c) + "</button>");
   });
-  items.push('<span style="color:var(--ink-soft);margin-left:6px">—— 连线 ——</span>');
+  items.push('</div></div>');
+
+  // —— 从数据动态提取其余维度可选值 ——
+  function uniq(field, split) {
+    var set = {};
+    graphNodes.forEach(function (n) {
+      if (n.type !== "herb") return;
+      var v = n[field];
+      if (!v) return;
+      if (split) v.split(/[、,，\s]+/).forEach(function (x) { if (x) set[x] = 1; });
+      else set[v] = 1;
+    });
+    return Object.keys(set);
+  }
+  // 药性（味 / 性 / 程度 三子组，子串组合选择，未选即不限制）
+  items.push('<div class="leg-group"><span class="leg-group-title">药性（味/性/程度 可组合）</span>');
+  function propSub(title, arr) {
+    items.push('<div class="leg-sub"><span class="leg-sub-title">' + title + '</span><div class="leg-group-items">');
+    arr.forEach(function (v) {
+      var on = graphFilters.property.indexOf(v) !== -1;
+      var cnt = graphLegendHitCount(function (n) { return (n.property || "").indexOf(v) !== -1; });
+      items.push('<button type="button" class="item leg-prop' + (on ? " active" : "") +
+        '" data-prop="' + esc(v) + '" title="药性含「' + esc(v) + '」（' + cnt + ' 味），未选即不限制">' +
+        esc(v) + ' <em>' + cnt + '</em></button>');
+    });
+    items.push('</div></div>');
+  }
+  propSub("味", GRAPH_FLAVORS);
+  propSub("性", GRAPH_NATURES);
+  propSub("程度（如 苦+微=微苦）", GRAPH_DEGREES);
+  items.push('</div>');
+  // 毒性（按程度归类，整组切换）
+  items.push('<div class="leg-group"><span class="leg-group-title">毒性</span><div class="leg-group-items">');
+  GRAPH_TOX_GROUPS.forEach(function (g) {
+    var on = g.vals.some(function (v) { return graphFilters.toxicity.indexOf(v) !== -1; });
+    var cnt = graphLegendHitCount(function (n) { return g.vals.indexOf(n.toxicity || "无毒") !== -1; });
+    items.push('<button type="button" class="item leg-tox' + (on ? " active" : "") +
+      '" data-tox="' + esc(g.vals.join(",")) + '" title="' + esc(g.label) + '：' + esc(g.vals.join(" / ")) + '（' + cnt + ' 味）">' +
+      esc(g.label) + ' <em>' + cnt + '</em></button>');
+  });
+  items.push('</div></div>');
+  // 归经（按脏腑系统归类，整组切换）
+  items.push('<div class="leg-group"><span class="leg-group-title">归经（按脏腑系统）</span><div class="leg-group-items">');
+  GRAPH_MER_SYSTEMS.forEach(function (g) {
+    var on = g.vals.some(function (v) { return graphFilters.meridian.indexOf(v) !== -1; });
+    var cnt = graphLegendHitCount(function (n) {
+      return graphMeridians(n.meridian).some(function (m) { return g.vals.indexOf(m) !== -1; });
+    });
+    items.push('<button type="button" class="item leg-mer' + (on ? " active" : "") +
+      '" data-mer="' + esc(g.vals.join(",")) + '" title="' + esc(g.label) + '：' + esc(g.vals.join(" / ")) + '（' + cnt + ' 味）">' +
+      esc(g.label) + ' <em>' + cnt + '</em></button>');
+  });
+  items.push('</div></div>');
+
+  // —— 连线图例 ——
+  items.push('<div class="leg-group"><span class="leg-group-title">连线</span><div class="leg-group-items">');
   Object.keys(GRAPH_REL_STYLE).forEach(function (r) {
     var st = GRAPH_REL_STYLE[r];
     items.push('<span class="item"><span class="line" style="border-top-color:' + st.color + '"></span>' + (GRAPH_REL_LABEL[r] || r) + "</span>");
   });
+  items.push('</div></div>');
+
   leg.innerHTML = items.join("");
+  // 药材关联视图中屏蔽条件选择：图例整体置灰禁用（点击处理器另有 graphFilterLocked 守卫）
+  leg.classList.toggle("disabled", graphFilterLocked);
+  graphUpdateFilterTag();
+
+  // 点击分类：OR 叠加切换
+  leg.querySelectorAll(".leg-cat").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      if (graphFilterLocked) return;   // 药材关联视图中屏蔽条件选择
+      graphEnsureAll();   // 筛选始终基于全体药材
+      var c = btn.dataset.cat;
+      var i = graphFilters.categories.indexOf(c);
+      if (i === -1) graphFilters.categories.push(c); else graphFilters.categories.splice(i, 1);
+      graphSelected = null;
+      graphUpdateHighlight(); graphBuildLegend(); graphFitToHighlight(); graphDraw();
+      graphLogFilter();
+    });
+  });
+  // 点击药性：OR 叠加切换
+  leg.querySelectorAll(".leg-prop").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      if (graphFilterLocked) return;   // 药材关联视图中屏蔽条件选择
+      graphEnsureAll();   // 筛选始终基于全体药材
+      var p = btn.dataset.prop;
+      var i = graphFilters.property.indexOf(p);
+      if (i === -1) graphFilters.property.push(p); else graphFilters.property.splice(i, 1);
+      graphSelected = null;
+      graphUpdateHighlight(); graphBuildLegend(); graphFitToHighlight(); graphDraw();
+      graphLogFilter();
+    });
+  });
+  // 点击毒性：整组切换（如 低毒 = 小毒/微毒 一起加入或移除）
+  leg.querySelectorAll(".leg-tox").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      if (graphFilterLocked) return;   // 药材关联视图中屏蔽条件选择
+      graphEnsureAll();   // 筛选始终基于全体药材
+      var vals = (btn.dataset.tox || "").split(",").filter(Boolean);
+      var allIn = vals.every(function (v) { return graphFilters.toxicity.indexOf(v) !== -1; });
+      if (allIn) {
+        graphFilters.toxicity = graphFilters.toxicity.filter(function (v) { return vals.indexOf(v) === -1; });
+      } else {
+        vals.forEach(function (v) { if (graphFilters.toxicity.indexOf(v) === -1) graphFilters.toxicity.push(v); });
+      }
+      graphSelected = null;
+      graphUpdateHighlight(); graphBuildLegend(); graphFitToHighlight(); graphDraw();
+      graphLogFilter();
+    });
+  });
+  // 点击归经：整组切换（如 肝胆 = 肝/胆 一起加入或移除）
+  leg.querySelectorAll(".leg-mer").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      if (graphFilterLocked) return;   // 药材关联视图中屏蔽条件选择
+      graphEnsureAll();   // 筛选始终基于全体药材
+      var vals = (btn.dataset.mer || "").split(",").filter(Boolean);
+      var allIn = vals.every(function (v) { return graphFilters.meridian.indexOf(v) !== -1; });
+      if (allIn) {
+        graphFilters.meridian = graphFilters.meridian.filter(function (v) { return vals.indexOf(v) === -1; });
+      } else {
+        vals.forEach(function (v) { if (graphFilters.meridian.indexOf(v) === -1) graphFilters.meridian.push(v); });
+      }
+      graphSelected = null;
+      graphUpdateHighlight(); graphBuildLegend(); graphFitToHighlight(); graphDraw();
+      graphLogFilter();
+    });
+  });
+  // 点击模式切换：交集 / 并集
+  leg.querySelectorAll(".leg-mode").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      if (graphFilterLocked) return;   // 药材关联视图中屏蔽条件选择
+      graphEnsureAll();   // 筛选始终基于全体药材
+      graphFilterMode = btn.dataset.mode;
+      graphUpdateHighlight(); graphBuildLegend(); graphFitToHighlight(); graphDraw();
+      graphLogFilter();
+    });
+  });
+}
+
+function graphLogFilter() {
+  console.log("[graph] 筛选模式：" + (graphFilterMode === "or" ? "并集(或)" : "交集(且)"),
+    "| 条件：", JSON.stringify(graphFilters),
+    "| 命中高亮节点数：", graphHl.size, "| 总节点数：", graphNodes.length);
+}
+
+/* 将视图平移+缩放，使当前高亮（筛选/选中）的节点居中铺满 */
+function graphFitToHighlight() {
+  var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  // 以「高亮层级 hi」为准纳入包围盒（含命中药材及其关联中间节点），确保全部可见
+  graphNodes.forEach(function (n) {
+    if (graphNodeLevel(n) !== "hi") return;
+    var nr = graphNodeRadius(n);   // 加上节点半径，避免大圆被裁边
+    minX = Math.min(minX, n.x - nr); minY = Math.min(minY, n.y - nr);
+    maxX = Math.max(maxX, n.x + nr); maxY = Math.max(maxY, n.y + nr);
+  });
+  if (minX === Infinity) return;
+  var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  var bw = Math.max(maxX - minX, 60), bh = Math.max(maxY - minY, 60);
+  var W = 1040, H = 620, pad = 100;
+  var z = Math.min((W - pad * 2) / bw, (H - pad * 2) / bh, 2.2);
+  z = Math.max(0.5, z);
+  graphZoom = z;
+  graphPanX = W / 2 - cx * z;
+  graphPanY = H / 2 - cy * z;
+  graphViewLock = false;   // 取消聚焦锁定，允许自由查看筛选结果
+  graphSimEnabled = false; // 冻结力导向，使筛选/选中结果稳定停在窗口内不漂移
+}
+
+// 将整个图谱居中铺满（略小于画布，留边距），作为初始视图；可随时复原
+function graphFitAll() {
+  var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  graphNodes.forEach(function (n) {
+    var nr = graphNodeRadius(n);
+    minX = Math.min(minX, n.x - nr); minY = Math.min(minY, n.y - nr);
+    maxX = Math.max(maxX, n.x + nr); maxY = Math.max(maxY, n.y + nr);
+  });
+  if (minX === Infinity) return;
+  var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+  var bw = Math.max(maxX - minX, 60), bh = Math.max(maxY - minY, 60);
+  var W = 1040, H = 620;
+  // 留边距：让图谱整体比显示界面略小一些
+  var margin = Math.min(W, H) * 0.06;   // 约 6%
+  var z = Math.min((W - margin * 2) / bw, (H - margin * 2) / bh, 2.2);
+  z = Math.max(0.3, z);
+  graphZoom = z;
+  graphPanX = W / 2 - cx * z;
+  graphPanY = H / 2 - cy * z;
+  graphViewLock = false;
 }
 
 function graphLoop() {
@@ -2365,13 +2792,51 @@ function graphLoop() {
     graphDraw();
     return;
   }
-  graphSimulate();
+  if (graphSimEnabled) graphSimulate();
   graphDraw();
   requestAnimationFrame(graphLoop);
 }
 
-async function loadGraph(focus) {
+// 返回「当前筛选条件下的全体药材图谱」（点空白处调用），不重新请求后端。
+// 无论此前是否处于某药材的关联子图，点空白都回到全体药材，并按当前筛选条件
+// 显示命中药材（有筛选则聚焦筛选结果，无筛选则铺满全图）。
+function graphRestorePrev() {
+  if (!graphDataAll) return false;
+  if (graphData === graphDataAll && !graphSelected) {
+    // 已在全体图且无选中：仅复位视图即可，无需重建
+    graphFitAll();
+    graphDraw();
+    return true;
+  }
+  // 还原点药材前暂存的筛选条件并解锁条件选择，回到「全体药材 + 当前筛选」图谱
+  graphFilterLocked = false;
+  graphData = graphDataAll;
+  graphReset();                       // 注意：会清空 graphFilters，故需在下方恢复之后再保留
+  if (graphFiltersBak) {
+    graphFilters = graphFiltersBak;   // 在 graphReset 清空之后重新写入筛选条件
+  }
+  graphFiltersBak = null;
+  graphBuild();
+  graphBuildLegend();
+  graphUpdateHighlight();
+  graphUpdateFilterTag();
+  // 有筛选：聚焦筛选结果，但保持力导向运行以把初始圆环堆叠的节点散开，
+  // 不被 graphFitToHighlight 的冻结打断（否则成环形状会一直挤在一起）。
+  if (graphHasFilter()) graphFitToHighlight(); else graphFitAll();
+  graphSimEnabled = true;
+  graphDraw();
+  return true;
+}
+
+async function loadGraph(focus, opts) {
+  opts = opts || {};
   var canvas = $("#graph-canvas");
+  // 切换图谱时按需保留筛选条件（点药材查看完整关联但仍保留筛选，方便继续选其他药材）
+  var savedFilters = null, savedMode = null;
+  if (opts.keepFilters) {
+    savedFilters = JSON.parse(JSON.stringify(graphFilters));
+    savedMode = graphFilterMode;
+  }
   try {
     var url = "/graph";
     if (focus) {
@@ -2389,15 +2854,21 @@ async function loadGraph(focus) {
     if (graphData.categoryColors) {
       Object.assign(GRAPH_CAT_COLORS, graphData.categoryColors);
     }
+    // 焦点为空 → 这是全体药材全图，记为筛选基准（每次筛选都基于全体药材）
+    if (!focus) graphDataAll = graphData;
     graphReset();
+    if (opts.keepFilters && savedFilters) {
+      // 恢复筛选条件（图例按钮会据此重新高亮 active）
+      graphFilters = savedFilters;
+      graphFilterMode = savedMode;
+    }
     graphBuild();
     graphBuildLegend();
     graphUpdateHighlight();
-    // 聚焦模式：锁定视图（焦点钉屏幕正中）+ 自动放大视口
-    if (graphNodes.some(function (n) { return n.focus; })) {
-      graphViewLock = true;
-      graphZoom = 1.15;
-    }
+    graphUpdateFilterTag();
+    // 初始视图：整个图谱居中铺满（略小于画布），可自由拖动/缩放
+    graphFitAll();
+    graphSimEnabled = true;   // 让初始图谱力导向展开稳定
     if (!window._graphRaf) {
       graphInitEvents();
       window._graphRaf = true;
@@ -2419,10 +2890,13 @@ $("[data-graph-load]").addEventListener("click", function () {
   // 支持多药材：逗号/顿号/空格/分号分隔，传入数组以「多味聚焦」展示
   var names = raw.split(/[，,、;；\s]+/).map(function (s) { return s.trim(); })
     .filter(function (s) { return s; });
+  // 搜索新药材即从药材关联视图/筛选暂存中离开，解除条件屏蔽
+  graphFilterLocked = false; graphFiltersBak = null;
   loadGraph(names.length === 1 ? names[0] : names);
 });
 $("[data-graph-all]").addEventListener("click", function () {
   $("#graph-focus").value = "";
+  graphFilterLocked = false; graphFiltersBak = null;
   loadGraph("");
 });
 $("#graph-focus").addEventListener("keydown", function (e) {
