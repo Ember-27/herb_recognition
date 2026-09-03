@@ -2359,6 +2359,18 @@ body.home-active .tcm-disclaimer {
   border-radius: 10px; margin-bottom: 10px; border: 1px solid var(--line);
 }
 
+/* 图谱知识卡片头部：药材名 + 收藏星标 */
+.kg-card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 8px;
+}
+.kg-card-head h3 { margin: 0; flex: 1 1 auto; }
+.kg-card-head .fav-star {
+  flex: 0 0 auto; font-size: 19px; padding: 2px 6px;
+  border-radius: 8px;
+}
+.kg-card-head .fav-star:hover { background: rgba(185, 138, 46, 0.12); }
+
 /* ============================================================
    响应式补充：侧栏在工作台内为悬浮竖排，小屏转顶部横排
    ============================================================ */

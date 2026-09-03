@@ -169,7 +169,7 @@ toc = [
     "四、模块二 · 中医药知识图谱", "十一、创新点",
     "五、模块三 · 特性检索与方剂推荐", "十二、不足与改进方向",
     "六、模块四 · RAG 问答与可解释性", "十三、总结与交付物",
-    "七、模块五 · 交互展示与平台接入",
+    "七、模块五 · 交互展示与本草补遗库",
 ]
 lt = box(s, 0.7, 1.5, 6.0, 5.3); lt.text_frame.word_wrap = True
 rt = box(s, 6.9, 1.5, 6.0, 5.3); rt.text_frame.word_wrap = True
@@ -283,7 +283,7 @@ set_text(tf, "RAG 增强问答", size=17, color=INK, bold=True)
 add_para(tf, "本地 BERT 对知识切片做中文语义向量检索，为 LLM 组装专家上下文。", size=13.5, bullet=True)
 add_para(tf, "策略：药名精确命中优先 + 语义 Top-K 补充；回答附「知识库来源」折叠卡，减幻觉。", size=13.5, bullet=True)
 add_para(tf, "离线可用、零新增依赖；BERT 失败自动降级关键词匹配，不抛异常。", size=13.5, bullet=True)
-add_para(tf, "外部 LLM（智谱 GLM）无 Key/失败 → 自动降级返回本地图谱结果。", size=13.5, bullet=True)
+add_para(tf, "外部 LLM（默认 DeepSeek，OpenAI 兼容）无 Key/失败 → 自动降级返回本地图谱结果。", size=13.5, bullet=True)
 set_text(tf, "可解释性", size=17, color=INK, bold=True)
 add_para(tf, "Grad-CAM 热力图：滑块实时调透明度，展示模型「看哪里」。", size=13.5, bullet=True)
 add_para(tf, "推理路径：识别→图谱查询→推荐 全链路可追溯，回答附来源标注。", size=13.5, color=VERM, bullet=True)
@@ -302,6 +302,23 @@ add_para(tf, "/predict 识别 · /search 检索 · /explain 热图 · /chat 对�
 add_para(tf, "端侧：导出纯视觉分支为 TorchScript（tools/export_model.py），输出 [B,163] logits，无需文本模型。", size=14, color=VERM, bullet=True)
 footnote(s)
 
+# ---------------- 10b. 模块五续：结果导出与本草补遗库 ----------------
+s = prs.slides.add_slide(BLANK); add_bg(s)
+title_bar(s, "模块五（续）· 结果导出与本草补遗库", "增补知识库盲区 + 一键留存结果")
+lt = box(s, 0.6, 1.5, 6.0, 5.2); lt.text_frame.word_wrap = True
+set_text(lt, "结果导出（自定义命名）", size=17, color=INK, bold=True)
+add_para(lt, "「图片识别」「特性检索」结果区均带「导出」按钮，一键导出 Markdown / PDF / Word。", size=14, bullet=True)
+add_para(lt, "弹窗可自定义文件名（自动过滤非法字符，留空回退默认名）。", size=14, bullet=True)
+add_para(lt, "含选区识别结果：先放原图（整体说明+各选区配伍参考），再分别给每个选区结果。", size=14, bullet=True)
+add_para(lt, "后端用 fpdf2 / python-docx 生成文件流下载。", size=14, color=VERM, bullet=True)
+rt = box(s, 6.9, 1.5, 6.0, 5.2); rt.text_frame.word_wrap = True
+set_text(rt, "本草补遗库（用户增补药材）", size=17, color=INK, bold=True)
+add_para(rt, "图谱搜索未命中时页面引导「去添加」；或工具栏打开「本草补遗库」面板。", size=14, bullet=True)
+add_para(rt, "增补模板：药名/图片/性味/归经/功效/别名/适用病症/个体禁忌/常用配伍。", size=14, bullet=True)
+add_para(rt, "保存后自动并入知识图谱（user_added 节点）与检索语料，可被检索/图谱/对话命中。", size=14, bullet=True)
+add_para(rt, "库面板支持编辑/删除，数据持久化于 data/user_herbs.json。", size=14, color=VERM, bullet=True)
+footnote(s)
+
 # ---------------- 11. 功能总览（一表看懂） ----------------
 s = prs.slides.add_slide(BLANK); add_bg(s)
 title_bar(s, "八、功能总览", "一表看懂：输入 / 输出 / 技术")
@@ -313,6 +330,8 @@ data = [
     ["方剂推荐", "主药 + 症状", "经典方剂 + 风险提示", "功效匹配 + 禁忌规避"],
     ["AI 对话", "文 + 图", "专家级解释 + 来源", "RAG + LLM"],
     ["关系图谱", "聚焦药材", "配伍/禁忌网络", "NetworkX + 力导向"],
+    ["结果导出", "识别/检索结果", "Markdown / PDF / Word", "fpdf2 + python-docx"],
+    ["本草补遗库", "药名/图片/性质", "增补药材并入检索与图谱", "CRUD + 真实图谱节点"],
 ]
 add_table(s, 0.6, 1.5, 12.1, 4.8, ["功能", "输入", "输出", "技术"], data,
           col_w=[2.6, 2.8, 3.6, 3.1], fsize=13)
@@ -365,6 +384,7 @@ inn = [
     "RAG 可溯源问答：本地语义检索 + 来源标注，离线可用、自动降级，显著降低幻觉。",
     "可解释与安全并重：Grad-CAM + 推理路径 + 毒性强制警示 + 置信度提示，做成默认能力。",
     "轻量可落地：8G 显存友好、纯前端零构建、REST 可服务化、端侧可导出。",
+    "可扩展与可交付并重：本草补遗库补足知识库盲区（搜索未命中即引导增补），增补药材自动并入检索与图谱并支持编辑/删除；识别与检索结果支持 Markdown/PDF/Word 一键导出、自定义命名。",
 ]
 for i, t in enumerate(inn):
     add_para(tf, f"{i+1}. {t}", size=14.5, color=DARK, bold=(i % 2 == 0), bullet=False, space=7)

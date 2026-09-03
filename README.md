@@ -12,12 +12,14 @@
 - 可解释性：融合注意力可视化 + 推理路径展示
 - 交互演示：Gradio Web 界面，一键识别并给出药性/相似药/方剂说明
 - 相似药推荐：按功效分类自动推荐功效相近的替代药材，辅助辨证选药（图片识别与 REST API 均支持）
+- 结果导出（自定义命名）：图片识别结果与特性检索结果均支持一键导出为 **Markdown / PDF / Word**，导出时可自定义文件名（自动过滤 `\ / : * ? " < > |` 等非法字符，留空则回退默认名）
+- 本草补遗库（用户增补药材）：关系图谱搜索未命中时，可一键进入「本草补遗库」手动增补药材（药名、图片、性味、归经、功效、别名、适用病症、个体禁忌、常用配伍）；新增药材自动并入知识图谱与检索语料，可在检索 / 图谱 / 对话中直接命中，并支持编辑与删除
 
 ## 目录结构
 
 ```
 herb_recognition/
-├── data/                     # 数据 (raw/processed/external)
+├── data/                     # 数据 (raw/processed/external；favorites.json 等运行时状态)
 ├── models/                   # 视觉/文本编码器、融合、分类头
 │   ├── vision_encoder.py
 │   ├── text_encoder.py
@@ -27,6 +29,7 @@ herb_recognition/
 ├── training/                 # 训练循环
 ├── evaluation/               # 评估与指标
 ├── app/                      # Gradio 演示 + FastAPI REST 接口 (api.py)
+├── web/                      # 新中式 Web 前端 (index.html + style.css + app.js，FastAPI 静态托管)
 ├── utils/                    # 数据加载、日志
 ├── tools/export_model.py     # 导出纯视觉分支为 TorchScript
 ├── experiments/
@@ -96,9 +99,9 @@ python main.py --mode demo --ckpt experiments/checkpoints/best_model.pth
 - **特性检索**：输入性味/归经/功效 → 卡片网格，印章式「完全匹配/部分匹配」角标
 - **Grad-CAM**：上传图片生成热力图，滑块实时调节热力叠加透明度
 - **AI 对话**：聊天室式多轮对话，可附图提问，回答附「知识库来源」折叠卡片
-- **药材关系图谱**：力导向网络图（拖拽/缩放/点击），聚焦单药查看配伍与禁忌网络
+- **药材关系图谱**：力导向网络图（拖拽/缩放/点击），聚焦单药查看配伍与禁忌网络；工具栏含 **「本草补遗库」** 入口，搜索未命中时可一键进入手动增补药材
 
-> 前端所有结果区均附医疗风险提示；图谱与特性检索接口返回结构化 JSON（`/graph`、`/herbs` 为新增图谱接口）。
+> 前端「图片识别」与「特性检索」结果区均含 **导出** 按钮（Markdown / PDF / Word，可自定义文件名）；所有结果区均附医疗风险提示。图谱与特性检索接口返回结构化 JSON（`/graph`、`/herbs` 为新增图谱接口）。
 
 #### Gradio 演示（调试/备用）
 
@@ -107,7 +110,7 @@ python main.py --mode demo --ckpt experiments/checkpoints/best_model.pth
 - **图片识别**：上传图片 + 可选文本描述 → Top-3 识别 + 药性/相似药/方剂说明
 - **特性检索**：输入性味/归经/功效 → 列出所有匹配药材 + 方剂推荐
 - **模型关注区域 (Grad-CAM)**：可视化模型识别依据的图像部位
-- **AI 对话**：与智谱 GLM 多轮对话，自动附带本地知识图谱 + RAG 知识库检索依据（回答末尾标注来源）；未配置 API Key 或调用失败时自动降级为本地检索结果
+- **AI 对话**：与外部大模型（默认 DeepSeek，OpenAI 兼容）多轮对话，自动附带本地知识图谱 + RAG 知识库检索依据（回答末尾标注来源）；未配置 API Key 或调用失败时自动降级为本地检索结果
 - **药材关系图谱**：交互式知识图谱可视化（拖拽/缩放/点击），选择药材聚焦其配伍与禁忌网络，红色虚线=十八反、橙色虚线=十九畏、绿色实线=相须相使
 
 > 首次发起 AI 对话时会加载本地 BERT 模型（`D:/models/bert-base-chinese`，约 20 秒，仅一次），用于知识库语义检索；检索失败会自动降级为关键词匹配，不影响对话。
@@ -118,7 +121,7 @@ python main.py --mode demo --ckpt experiments/checkpoints/best_model.pth
 
 1. 确认 API Key（可选，用于「AI 对话」页签）：
    ```powershell
-   echo $env:ZHIPU_API_KEY
+   echo $env:DEEPSEEK_API_KEY
    ```
 2. 防火墙放行端口（首次需管理员权限的终端）：
    ```powershell
@@ -153,8 +156,15 @@ python main.py --mode serve --port 8000
 | `POST /search` | 纯文本特性检索（JSON: `{"text":"味甘平，归肝肾经"}`），返回结构化 `parsed/full/partial` |
 | `POST /explain` | Grad-CAM 热图（multipart，返回 PNG，说明在 `X-Explain-Info` 头，URL 编码） |
 | `POST /chat` | 外部 LLM 对话解释（multipart；`question` + 可选 `image` + 可选 `history` 多轮），返回 `answer` + 本地识别结果 |
-| `GET /graph` | 药材关系图谱力导向图 JSON（可选 `?focus=枸杞`；含 `nodes/links/categoryColors`） |
+| `GET /graph` | 药材关系图谱力导向图 JSON（可选 `?focus=枸杞`；含 `nodes/links/categoryColors`；用户增补药材 `user_added=true` 一并纳入） |
 | `GET /herbs` | 全部药材名列表（前端 datalist 自动补全用） |
+| `POST /api/export_recog_pdf` | 导出识别/检索结果为 PDF（`{title, items:[{heading,images,text,markdown}]}`），返回文件流下载 |
+| `POST /api/export_recog_docx` | 导出识别/检索结果为 Word（同上结构） |
+| `POST /api/export_chat_pdf` | 导出 AI 对话为 PDF（`[{role, content}]`） |
+| `GET /api/user_herbs` | 获取「本草补遗库」全部用户增补药材 |
+| `POST /api/user_herbs` | 新增用户增补药材（JSON，含图片 base64） |
+| `PUT /api/user_herbs/{name}` | 按药名编辑指定用户增补药材 |
+| `DELETE /api/user_herbs/{name}` | 按药名删除指定用户增补药材 |
 
 示例（Windows PowerShell）：
 
@@ -164,22 +174,24 @@ curl.exe -F "image=@photo.jpg;type=image/jpeg" -F "text=味甘" http://127.0.0.1
 
 #### 外部 LLM 对话（`/chat` 接口，可选）
 
-本地识别 → 组装「中医药专家」上下文 → 调用智谱 GLM（OpenAI 兼容）生成自然语言解释。
+本地识别 → 组装「中医药专家」上下文 → 调用外部大模型（默认 DeepSeek，OpenAI 兼容）生成自然语言解释。
 **API Key 为敏感信息，请手动配置，勿写入代码或配置文件**：
 
 ```powershell
 # PowerShell（当前会话）
-$env:ZHIPU_API_KEY="你的key"
-# 可选覆盖（默认 https://open.bigmodel.cn/api/paas/v4，模型 glm-4-flash）
-$env:LLM_BASE_URL="https://open.bigmodel.cn/api/paas/v4"
-$env:LLM_MODEL="glm-4-air"
+$env:DEEPSEEK_API_KEY="你的key"
+# 可选覆盖（默认 https://api.deepseek.com/v1，模型 deepseek-v4-flash）
+$env:LLM_BASE_URL="https://api.deepseek.com/v1"
+$env:LLM_MODEL="deepseek-v4-flash"
 
 python main.py --mode serve --port 8000
 ```
 
+兼容智谱 GLM：改用 `$env:ZHIPU_API_KEY="你的key"` + `$env:LLM_BASE_URL="https://open.bigmodel.cn/api/paas/v4"` + `$env:LLM_MODEL="glm-4-flash"`。
+
 - 未配置 Key 或调用失败时**不会报 500**：`/chat` 自动降级返回本地知识图谱结果，`llm` 字段标记为 `disabled` / `error`；返回体含 `rag_sources`（本次引用的知识库条目）。
 - 多轮对话：`history` 传 JSON 字符串 `[{"role":"user","content":"..."},{"role":"assistant","content":"..."}]`。
-- 默认模型为免费档 `glm-4-flash`（高峰更稳定），遇 429 限流/5xx 自动退避重试 3 次；可改 `LLM_MODEL` 或 `experiments/configs/llm_config.yaml`（其中 `api_key` 请留空）。
+- 默认模型为 `deepseek-v4-flash`，遇 429 限流/5xx 自动退避重试 3 次；可改 `LLM_MODEL` 或 `experiments/configs/llm_config.yaml`（其中 `api_key` 请留空，走环境变量）。
 
 ```bash
 # 图片 + 问题（单轮）

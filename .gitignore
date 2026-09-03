@@ -6,26 +6,55 @@ __pycache__/
 .eggs/
 build/
 dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.hypothesis/
 
 # ---- 虚拟环境 ----
 venv/
 venv312/
 .venv/
+envs/
+.python-version
+
+# ---- 环境变量与密钥（API Key 等敏感信息，勿入库）----
+.env
+.env.*
+!.env.example
 
 # ---- 数据集（外部/原始大图，不入库；data/processed/ 为运行必需的小配置，保留）----
 data/external/
 data/raw/
 
 # ---- 模型权重与训练产物（可重新训练生成）----
-experiments/checkpoints/
+experiments/checkpoints*/
 *.pth
 *.pt
 *.onnx
 *.safetensors
 *.ckpt
+*.pkl
+*.pickle
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.joblib
+
+# ---- 训练可视化日志 ----
+runs/
+wandb/
+lightning_logs/
+*.events.out.tfevents.*
 
 # ---- 部署导出产物（运行 tools/export_model.py 重新生成）----
 exports/
+
+# ---- 交付文档（不随源码提交，按交付物单独整理）----
+docs/
 
 # ---- 离线依赖安装包 ----
 wheels/
@@ -37,13 +66,19 @@ wheels/
 *.bak
 *.orig
 *.rej
+*.swp
+.ipynb_checkpoints/
 
-# ---- IDE / 系统 ----
+# ---- IDE / 系统 / Office 临时文件 ----
 .idea/
 .vscode/
-*.swp
 .DS_Store
 Thumbs.db
+~$*
+
+# ---- 前端构建产物（当前 web/ 为纯静态无需构建，预留）----
+node_modules/
+web/node_modules/
 
 # ---- CodeBuddy 项目数据（本地工具数据，不入库）----
 .codebuddy/

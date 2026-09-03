@@ -446,6 +446,11 @@
         <label class="export-format-opt"><input type="radio" name="exportFmt" value="pdf"> PDF 文件 (.pdf)</label>
         <label class="export-format-opt"><input type="radio" name="exportFmt" value="image"> 图片 (.png)</label>
       </div>
+      <div class="export-chat-filename">
+        <label class="export-format-label" for="exportChatName">文件名（留空则按时间自动命名）</label>
+        <input id="exportChatName" class="text-input" type="text"
+               placeholder="本草对话导出（可自定义）" maxlength="80" autocomplete="off">
+      </div>
     </div>
     <div class="export-chat-foot">
       <button type="button" class="fav-mini-btn" data-export-close>取消</button>

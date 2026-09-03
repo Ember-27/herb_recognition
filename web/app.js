@@ -1172,6 +1172,12 @@ function toxBadge(tox) {
   return '<span class="tcm-badge tcm-badge-ok">' + esc(tox) + "</span>";
 }
 
+// 导出 Markdown 用的毒性标注：仅“大毒/有毒/小毒/微毒”标为毒性，“无毒”与空值不标
+function toxMd(tox) {
+  if (!tox || tox === "无毒") return "";
+  return " ⚠" + tox;
+}
+
 function renderPredict(data) {
   var cards = $("#recognize-cards");
   var html = "";
@@ -1547,7 +1553,7 @@ function searchItemsMd(items) {
     var info = it.info || {};
     var lines = [];
     var name = cleanName(it.name);
-    var tox = (info.toxicity || it.toxicity) ? " ⚠毒性药材" : "";
+    var tox = toxMd(info.toxicity || it.toxicity);
     lines.push("**" + name + "**" + tox);
     var hitWords = [];
     if (it.hits) {
@@ -2122,8 +2128,16 @@ function timestampName(ext) {
     "_" + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()) + "." + ext;
 }
 
+// 清洗用户自定义文件名：去除非法字符并截断；空则返回 ""
+function sanitizeFileName(raw) {
+  return String(raw || "")
+    .replace(/[\\/:*?"<>|]/g, "")
+    .replace(/^\s+|\s+$/g, "")
+    .slice(0, 80);
+}
+
 // 1) Markdown
-function exportChatMarkdown(list) {
+function exportChatMarkdown(list, name) {
   var lines = ["# 本草识鉴 · 对话导出", "",
     "> 导出时间：" + new Date().toLocaleString(), ""];
   list.forEach(function (m) {
@@ -2133,11 +2147,12 @@ function exportChatMarkdown(list) {
     lines.push("");
   });
   var blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
-  downloadBlob(blob, timestampName("md"));
+  var safe = sanitizeFileName(name);
+  downloadBlob(blob, (safe ? safe + ".md" : timestampName("md")));
 }
 
 // 2) 图片（Canvas 绘制对话气泡）
-function exportChatImage(list) {
+function exportChatImage(list, name) {
   var dpr = 2, pad = 28, lineH = 26, bubblePad = 16, maxW = 720;
   var font = "15px 'Microsoft YaHei', 'PingFang SC', sans-serif";
   var canvas = document.createElement("canvas");
@@ -2204,7 +2219,8 @@ function exportChatImage(list) {
   });
 
   canvas.toBlob(function (blob) {
-    downloadBlob(blob, timestampName("png"));
+    var safe = sanitizeFileName(name);
+    downloadBlob(blob, (safe ? safe + ".png" : timestampName("png")));
   }, "image/png");
 }
 function roundRect(ctx, x, y, w, h, r) {
@@ -2218,7 +2234,7 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 // 3) PDF（请求后端生成文件并直接下载，不调起浏览器打印）
-async function exportChatPdf(list) {
+async function exportChatPdf(list, name) {
   try {
     var resp = await fetch("/api/export_chat_pdf", {
       method: "POST",
@@ -2231,7 +2247,8 @@ async function exportChatPdf(list) {
       return;
     }
     var blob = await resp.blob();
-    downloadBlob(blob, "本草对话导出.pdf");
+    var safe = sanitizeFileName(name);
+    downloadBlob(blob, (safe ? safe + ".pdf" : "本草对话导出.pdf"));
   } catch (e) {
     toast("PDF 导出出错：" + e.message);
   }
@@ -2257,9 +2274,10 @@ function initExportChat() {
     var sel = gatherSelectedChat();
     if (!sel.length) { toast("请至少勾选一条对话。"); return; }
     var fmt = (document.querySelector('input[name="exportFmt"]:checked') || {}).value || "markdown";
-    if (fmt === "markdown") exportChatMarkdown(sel);
-    else if (fmt === "image") exportChatImage(sel);
-    else if (fmt === "pdf") exportChatPdf(sel);
+    var name = (recEl("exportChatName") || {}).value || "";
+    if (fmt === "markdown") exportChatMarkdown(sel, name);
+    else if (fmt === "image") exportChatImage(sel, name);
+    else if (fmt === "pdf") exportChatPdf(sel, name);
     closeExportChat();
     toast("已开始导出（" + fmt + "）。");
   });
@@ -2312,7 +2330,7 @@ function recogTop5Md(top5, lowConfidence) {
   if (!top5 || !top5.length) return "_（无候选结果）_\n";
   var lines = top5.map(function (c, i) {
     var prob = (c.prob != null) ? (c.prob * 100).toFixed(1) + "%" : "—";
-    var tox = c.toxicity ? " ⚠毒性药材" : "";
+    var tox = toxMd(c.toxicity);
     return (i + 1) + ". **" + (c.name || "未知") + "**" + tox + "　置信度 " + prob;
   });
   if (lowConfidence) lines.push("\n> ⚠ 模型对该图置信度较低，结果仅供参考。");
@@ -2336,7 +2354,7 @@ function recogImageMarkdown(im) {
   var parts = ["## 识别结果\n"];
   parts.push("**最可能：** " + (t1.name || "未知") +
     (t1.prob != null ? "（置信度 " + (t1.prob * 100).toFixed(1) + "%）" : "") +
-    (t1.toxicity ? " ⚠毒性药材" : ""));
+    toxMd(t1.toxicity));
   parts.push("\n### 候选药材（Top-5）\n" + recogTop5Md(d.top5, d.low_confidence));
   parts.push("\n### 药性详情\n" + (d.kg_info || "_（暂无）_"));
   parts.push("\n### 易混淆药材\n" + recogConfusableMd(d.confusable));
@@ -2354,7 +2372,7 @@ function recogCropMarkdown(im, ci) {
   var top1 = (z.top5 && z.top5[0]) || {};
   parts.push("**最可能：** " + (top1.name || "未知") +
     (top1.prob != null ? "（置信度 " + (top1.prob * 100).toFixed(1) + "%）" : "") +
-    (top1.toxicity ? " ⚠毒性药材" : ""));
+    toxMd(top1.toxicity));
   parts.push("\n### 候选药材（Top-5）\n" + recogTop5Md(z.top5, z.low_confidence));
   parts.push("\n### 药性详情\n" + (z.kg_info || "_（暂无）_"));
   parts.push("\n### 易混淆药材\n" + recogConfusableMd(z.confusable));
@@ -2438,14 +2456,6 @@ function buildRecogItems() {
           return fileToDataURL(im.file);
         }).then(function (origURL) {
           var origMd = imText ? "" : "_（整图，以下为各选区分别识别的结果）_\n";
-          var compat = (im.result.data && im.result.data.compat) || {};
-          if (compat && Array.isArray(compat.pairs) && compat.pairs.length) {
-            origMd += "\n### 配伍参考（基于各选区药材）\n";
-            compat.pairs.forEach(function (p) {
-              var a = p.a || p[0] || "", b = p.b || p[1] || "", rel = p.relation || p[2] || "";
-              origMd += "- **" + a + "** ↔ **" + b + "**：" + rel + "\n";
-            });
-          }
           items.push({
             heading: giLabel + " · 原图",
             images: [origURL],
@@ -3052,7 +3062,9 @@ function graphShowDetail(n) {
   var info = $("#graph-info");
   var parts = [];
   if (n.type === "herb") {
-    parts.push("<h3>" + esc(cleanName(n.id)) + "</h3>");
+    // 卡片头部：药材名 + 收藏星标（复用全局收藏委托，点击即收藏）
+    var favBtn = favStarHerb(n.id, { property: n.property });
+    parts.push('<div class="kg-card-head"><h3>' + esc(cleanName(n.id)) + "</h3>" + favBtn + "</div>");
     if (n.image) parts.push('<img class="herb-detail-img" src="' + esc(n.image) + '" alt="">');
     if (n.user_added) parts.push('<div class="muted">来源：用户增补（本草补遗库）</div>');
     parts.push("<div>药性：" + esc(n.property || "—") + "</div>");

@@ -18,10 +18,10 @@
   --fs-ckpt experiments/checkpoints/few_shot_proto.pth
   --fs-eval-only                             小样本模式只评估不训练
 
-外部 LLM（/chat 接口）:
+外部 LLM（/chat 接口，默认 DeepSeek，OpenAI 兼容）:
   API Key 为敏感信息，请手动通过环境变量配置（勿写入代码/配置）:
-    PowerShell: $env:ZHIPU_API_KEY="你的key"
-    CMD:        setx ZHIPU_API_KEY "你的key"
+    PowerShell: $env:DEEPSEEK_API_KEY="你的key"   # 兼容智谱: $env:ZHIPU_API_KEY="你的key"
+    CMD:        setx DEEPSEEK_API_KEY "你的key"
   可选环境变量: LLM_BASE_URL / LLM_MODEL / LLM_TIMEOUT / LLM_TEMPERATURE / LLM_MAX_TOKENS
 """
 import os

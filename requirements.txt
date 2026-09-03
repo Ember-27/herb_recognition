@@ -5,16 +5,18 @@
 torch>=2.0.0
 torchvision>=0.15.0
 
-# ---------- 视觉 / 多模态模型 ----------
+# ---------- 视觉编码器 ----------
 timm>=0.9.0
-open-clip-torch>=2.20.0
 
 # ---------- 文本编码器 (中医药中文) ----------
 transformers>=4.35.0
-sentencepiece>=0.1.99
 
 # ---------- 知识图谱 (先用内存版 Networkx) ----------
 networkx>=3.1
+
+# ---------- 数据处理 ----------
+numpy>=1.24.0
+pandas>=1.5.0
 
 # ---------- 数据增强 ----------
 albumentations>=1.3.0
@@ -34,15 +36,17 @@ gradio>=4.5.0
 fastapi>=0.110.0
 uvicorn>=0.29.0
 python-multipart>=0.0.9
+httpx>=0.24.0    # LLM 对话客户端 (app/llm_client.py)
 
 # ---------- 导出功能 (对话 / 识别结果 PDF & Word) ----------
 fpdf2>=2.7.0
 python-docx>=1.1.0
 
 # ---------- 外部 LLM 对话 (/chat 接口，可选) ----------
-# 无需新增依赖：复用 fastapi 自带的 httpx 调用 OpenAI 兼容接口（默认智谱 GLM）。
-# API Key 为敏感信息，请手动配置环境变量 ZHIPU_API_KEY（勿写入代码/配置文件）:
-#   PowerShell: $env:ZHIPU_API_KEY="你的key"
+# 通过 httpx 调用 OpenAI 兼容接口（默认 DeepSeek，见 experiments/configs/llm_config.yaml）；
+# 未配置 API Key 或调用失败时自动降级为本地知识图谱结果，不影响主流程。
+# API Key 为敏感信息，请手动配置环境变量（勿写入代码/配置文件）:
+#   PowerShell: $env:DEEPSEEK_API_KEY="你的key"   # 兼容智谱: $env:ZHIPU_API_KEY="你的key"
 
 # ---------- (可选) 真实知识图谱数据库 ----------
 # 若 experiments/configs/default_config.yaml 中 knowledge_graph.use_neo4j=true 再安装：

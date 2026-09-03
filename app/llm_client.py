@@ -7,7 +7,7 @@
     LLM_MODEL                     模型名，默认 deepseek-v4-flash
     LLM_CONFIG                    llm_config.yaml 路径（可选），其中 api_key 建议留空走环境变量
 
-依赖 httpx（fastapi 自带依赖），无需新增第三方包。
+依赖 httpx（已在 requirements.txt 的 REST API 区显式声明）。
 """
 import os
 import time
